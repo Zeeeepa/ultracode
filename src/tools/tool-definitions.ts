@@ -1,11 +1,24 @@
 /**
- * MCP Tool Definitions
- *
- * Defines all available MCP tools with their schemas and descriptions.
- * Used by ListToolsRequestSchema handler.
+ * Minimal MCP tool definitions — short descriptions + output token estimates.
+ * Detailed docs: get_help(topic='tool-reference').
+ * Synced with Zig commit 5de969e1.
  */
 
 import { z } from "zod";
+
+// ── Dynamic index description ────────────────────────────────────────
+// After successful indexing, setIndexStatus() updates the description shown in tools/list.
+const INDEX_DEFAULT_DESC = "Index project codebase into SQLite+graph. ~200tok";
+let indexDynamicDesc: string | null = null;
+
+export function setIndexStatus(entities: number, hasSemantic: boolean): void {
+  indexDynamicDesc = `Index project. Last: ${entities} entities, semantic ${hasSemantic ? "available" : "unavailable"}. ~200tok`;
+}
+
+export function getIndexDescription(): string {
+  return indexDynamicDesc ?? INDEX_DEFAULT_DESC;
+}
+
 import { branchToolDefinitions } from "./branch-schemas.js";
 import {
   AddMemberSchema,
@@ -122,8 +135,7 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "get_help",
-      description:
-        "[INFO] Get detailed documentation and guides about UltraCode. Essential reading before using tools. Topics: 'quick-start', 'tool-reference', 'workflows', 'tracing', 'autodoc', 'patterns', 'security'. Agent-specific: 'explore' (fast search), 'planning' (risk assessment), 'modification' (safe code changes). Use category matching your role for optimized guidance.",
+      description: "Help docs by topic. ~1500tok",
       inputSchema: zodToJsonSchema(
         z.object({
           topic: z
@@ -139,21 +151,17 @@ export function getToolsList(): ToolDefinition[] {
               "patterns",
               "security",
             ])
-            .describe("Documentation topic to read. Use explore/planning/modification for agent-specific guides."),
+            .describe("quick-start | tool-reference (all tools) | explore | planning | modification"),
         }),
       ),
     },
     {
       name: "get_tools_for_task",
-      description:
-        "[INFO] Recommend relevant tools for your task. Describe what you want to do (e.g. 'find duplicates', 'refactor safely', 'understand data flow') and get ranked tool suggestions. Optionally specify your agent type (explore/plan/modify) for filtered recommendations. Returns top 10 tools with scores and reasons.",
+      description: "Recommend tools for a task description. ~200tok",
       inputSchema: zodToJsonSchema(
         z.object({
-          task: z.string().describe("What you want to do (e.g. 'find duplicates', 'trace execution path')"),
-          agentType: z
-            .enum(["explore", "plan", "modify", "analyze", "any"])
-            .optional()
-            .describe("Your agent type for filtered recommendations"),
+          task: z.string().describe("Task description"),
+          agentType: z.enum(["explore", "plan", "modify", "analyze", "any"]).optional().describe("Agent type filter"),
         }),
       ),
     },
@@ -163,13 +171,12 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "index",
-      description:
-        "[INDEX] ⚠️ USUALLY NOT NEEDED! GitWatcher indexes automatically: incremental on file changes, full on branch switch and first setup. Manual call only to force full reindex or if indexing failed. Multi-agent parsing for TS/JS/Python/Go/Rust/Java/C++. Example: index(directory='D:\\\\project'). 📖 get_help(topic='quick-start').",
+      description: getIndexDescription(),
       inputSchema: zodToJsonSchema(IndexToolSchema),
     },
     {
       name: "clean_index",
-      description: "[INDEX] Reset graph and then perform a full index",
+      description: "Clear all indexed data. ~50tok",
       inputSchema: zodToJsonSchema(CleanIndexSchema),
     },
 
@@ -178,14 +185,12 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "get_members",
-      description:
-        "[EXPLORE] List parsed entities within a single file or directory (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries. Accepts both file paths and directory paths — when a directory is given, returns entities from all files in the subtree.",
+      description: "List code entities with filters. limit scales output. ~200-2000tok",
       inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
     },
     {
       name: "list_entity_relationships",
-      description:
-        "[EXPLORE] List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
+      description: "All relationships (in/out) for an entity. ~200-1000tok",
       inputSchema: zodToJsonSchema(ListRelationshipsToolSchema),
     },
 
@@ -194,29 +199,27 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "query",
-      description: "[EXPLORE] Query the code graph using natural language or structured queries",
+      description: "Search entities by name (LIKE). limit scales output. ~200-2000tok",
       inputSchema: zodToJsonSchema(QueryToolSchema),
     },
     {
       name: "semantic_search",
-      description:
-        "[EXPLORE] Search codebase by MEANING using natural language (5-10x faster than Grep). Understands 'auth functions', 'error handlers', 'API endpoints'. Returns rich metadata: complexity, control flow, documentation status. Supports filters: minCyclomatic, hasExceptions, hasAwaits, hasDocumentation. Supports changedInLastCommits/changedSinceMs to narrow to recently changed code. Examples: 'data processing minCyclomatic=10' (complex code), 'API hasAwaits=true changedInLastCommits=5' (recently changed async code). 📖 Run get_help(topic='quick-start') for full guide.",
+      description: "Search code by meaning (vector+text+graph hybrid). ~200-2000tok",
       inputSchema: zodToJsonSchema(SemanticSearchSchema),
     },
     {
       name: "find_similar_code",
-      description: "[EXPLORE] Find code similar to a given snippet using semantic analysis",
+      description: "Find entities similar to a given one. ~200-800tok",
       inputSchema: zodToJsonSchema(FindSimilarCodeSchema),
     },
     {
       name: "cross_language_search",
-      description: "[EXPLORE] Search across multiple programming languages",
+      description: "Search across all languages, grouped by language. ~200-2000tok",
       inputSchema: zodToJsonSchema(CrossLanguageSearchSchema),
     },
     {
       name: "pattern_search",
-      description:
-        "[EXPLORE] Advanced multi-mode search: entity (regex on names/types), content (search inside code), semantic (meaning), hybrid (combined). Framework-aware (filter by React/Vue/Angular). SIMD-accelerated. Supports changedInLastCommits/changedSinceMs history filters. Use when semantic_search isn't enough. Examples: pattern_search(pattern='handle.*Error', mode='entity'), pattern_search(pattern='useState', mode='content', changedInLastCommits=5). 📖 get_help(topic='tool-reference').",
+      description: "Search entities by name pattern. ~200-1000tok",
       inputSchema: zodToJsonSchema(PatternSearchSchema),
     },
 
@@ -225,118 +228,103 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "analyze_code_impact",
-      description:
-        "[PLAN] Impact analysis: what breaks if I change X? Find all entities/files depending on a symbol. Use BEFORE refactoring/deletion to prevent regressions. Supports highlightRecentChanges to annotate volatile dependencies. Workflow: 1) get_members(file='utils.ts') to get entity IDs, 2) analyze_code_impact(entityId='...', highlightRecentChanges=true). Returns dependent files, functions, risk score, volatility ratio. 📖 get_help(topic='workflows').",
+      description: "Impact of changing entity: dependents, risk. detail_level controls verbosity. ~200-2000tok",
       inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema),
     },
     {
       name: "find_duplicates",
-      description: "[ANALYZE] Find duplicate or similar code blocks across the codebase using semantic similarity",
+      description: "Code duplicates by token similarity (Jaccard). ~200-1500tok",
       inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
     },
     {
       name: "jscpd_detect_clones",
-      description: "[ANALYZE] Run JSCPD clone detection using a lightweight tokenizer",
+      description: "Code clones via rolling-hash fingerprinting. max_results scales output. ~300-2000tok",
       inputSchema: zodToJsonSchema(JscpdCloneDetectionSchema),
     },
     {
       name: "suggest_refactoring",
-      description: "[ANALYZE] Get refactoring suggestions for improving code quality",
+      description: "Refactoring suggestions by complexity/coupling. ~200-1000tok",
       inputSchema: zodToJsonSchema(SuggestRefactoringSchema),
     },
     {
       name: "analyze_hotspots",
-      description: "[PLAN] Find code hotspots based on complexity, changes, or coupling",
+      description: "High complexity/coupling code hotspots. ~200-1000tok",
       inputSchema: zodToJsonSchema(AnalyzeHotspotsSchema),
     },
     {
       name: "find_related_concepts",
-      description: "[ANALYZE] Find conceptually related code to a given entity",
+      description: "Entities related to a concept (search + graph neighbors). ~200-800tok",
       inputSchema: zodToJsonSchema(FindRelatedConceptsSchema),
     },
     {
       name: "analyze_state_chaos",
-      description:
-        "[ANALYZE] Analyze state management chaos in any codebase (TypeScript, C#, etc.). Detects scattered state, race conditions, C# anti-patterns (async-void, mutable-static, god-service), and suggests refactoring strategies.",
+      description: "Shared mutable state, god objects, circular deps. ~200-2000tok",
       inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema),
     },
     {
       name: "analyze_swagger_impact",
-      description:
-        "[PLAN] Analyze impact of Swagger/OpenAPI spec changes. Shows affected controllers (producers), generated clients (consumers), and generated types. Assesses breaking change risk. Use before modifying swagger files or controllers that produce API. 📖 get_help(topic='workflows').",
+      description: "Impact of OpenAPI spec changes on codebase. ~200-1000tok",
       inputSchema: zodToJsonSchema(AnalyzeSwaggerImpactSchema),
     },
     {
       name: "analyze_api_impact",
-      description:
-        "[PLAN] Analyze impact of API contract changes across Swagger/OpenAPI, Protobuf/gRPC, and GraphQL schemas. Shows affected producers (servers/resolvers), consumers (clients/hooks), and generated types. Auto-detects contract type or filter with contractType parameter. Use before modifying any API spec.",
+      description: "Breaking change risk for public API entity. ~200-800tok",
       inputSchema: zodToJsonSchema(AnalyzeApiImpactSchema),
     },
     {
       name: "get_database_schema",
-      description:
-        "[EXPLORE] Show database schema reconstructed from SQL files, Prisma schemas, ORM models (TypeORM, Sequelize, JPA, EF Core, Django, SQLAlchemy, GORM, Dapper, linq2db), and Redis key patterns. Filters: tableName (partial match), dbEngine (postgres/mysql/clickhouse/redis/sqlite/mssql). Use includeRelationships=true for FK and code links.",
+      description: "SQLite schema for all 4 databases. ~500-1500tok",
       inputSchema: zodToJsonSchema(GetDatabaseSchemaSchema),
     },
     {
       name: "graph_metrics",
-      description:
-        "[PLAN] Graph-based architecture metrics: PageRank (entity importance), Louvain (community/module detection), centrality (hub/authority/bridge roles), bus factor (knowledge concentration risk). Use persist=true to store PageRank/Louvain in entity metadata for semantic search boosting. Workflow: graph_metrics({metric:'pagerank', topN:10}) → top-10 most important entities.",
+      description: "PageRank, betweenness, communities, bus factor. ~200-500tok",
       inputSchema: zodToJsonSchema(GraphMetricsSchema),
     },
     {
       name: "pagerank",
-      description:
-        "[PLAN] Compute PageRank scores to find the most architecturally important entities. Higher score = more dependencies flow through this entity. Use persist=true to store scores in entity metadata for semantic search boosting.",
+      description: "PageRank importance scores. persist saves to metadata. ~200tok",
       inputSchema: zodToJsonSchema(
         z.object({
-          projectPath: z.string().optional().describe("Project directory path"),
-          topN: z.number().optional().default(20).describe("Number of top entities to return"),
-          persist: z
-            .boolean()
-            .optional()
-            .default(false)
-            .describe("Persist PageRank scores to entity metadata for semantic search boosting"),
+          projectPath: z.string().optional().describe("Project dir"),
+          topN: z.number().optional().default(20).describe("Top N entities (default 20)"),
+          persist: z.boolean().optional().default(false).describe("Save to entity metadata"),
         }),
       ),
     },
     {
       name: "louvain_communities",
-      description:
-        "[PLAN] Detect code communities/clusters using Louvain algorithm. Groups tightly coupled entities into communities with cohesion metrics. Use persist=true to store community IDs in entity metadata. Returns modularity score, community sizes, and main files per community.",
+      description: "Detect code communities/clusters (Louvain). ~200-500tok",
       inputSchema: zodToJsonSchema(
         z.object({
-          projectPath: z.string().optional().describe("Project directory path"),
-          minCommunitySize: z.number().optional().default(2).describe("Minimum community size to include"),
-          persist: z.boolean().optional().default(false).describe("Persist community IDs to entity metadata"),
+          projectPath: z.string().optional().describe("Project dir"),
+          minCommunitySize: z.number().optional().default(2).describe("Min community size"),
+          persist: z.boolean().optional().default(false).describe("Save community IDs to metadata"),
         }),
       ),
     },
     {
       name: "centrality_analysis",
-      description:
-        "[PLAN] Compute degree centrality and classify entities by role: hub (calls many), authority (called by many), bridge (balanced), leaf (isolated). Finds key connection points in the codebase architecture.",
+      description: "Degree centrality and entity roles (hub/authority/bridge/leaf). ~200tok",
       inputSchema: zodToJsonSchema(
         z.object({
-          projectPath: z.string().optional().describe("Project directory path"),
-          topN: z.number().optional().default(20).describe("Number of top entities to return"),
+          projectPath: z.string().optional().describe("Project dir"),
+          topN: z.number().optional().default(20).describe("Top N entities (default 20)"),
         }),
       ),
     },
     {
       name: "bus_factor",
-      description:
-        "[PLAN] Analyze knowledge concentration risk per file and module. Shows how many developers contribute 80% of changes — low bus factor means high risk if key contributors leave. Based on git history (last 500 commits).",
+      description: "Knowledge concentration risk per file (git history). ~200tok",
       inputSchema: zodToJsonSchema(
         z.object({
-          projectPath: z.string().optional().describe("Project directory path"),
+          projectPath: z.string().optional().describe("Project dir"),
         }),
       ),
     },
     {
       name: "detect_technology_stack",
-      description:
-        "[EXPLORE] Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
+      description: "Detect project languages/frameworks/tools. ~200tok",
       inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
     },
 
@@ -345,13 +333,7 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "get_architecture_diagram",
-      description:
-        "[EXPLORE] Generate architecture diagrams in Mermaid, Graphviz DOT, or D2 format. " +
-        "Specify entryPoint (file/class/module) or omit for project overview. " +
-        "depth controls detail level (1=files, 2=classes, 3=methods). " +
-        "dataFlowLevel adds type annotations (0=none, 1=basic types, 2=params+conditionals, 3=field mapping). " +
-        "Auto-detects diagramType (flowchart/class/component) from code structure. " +
-        "Example: get_architecture_diagram({depth:2, dataFlowLevel:1, format:'mermaid'}).",
+      description: "Generate arch diagram (Mermaid/Graphviz/D2). max_nodes scales output. ~500-3000tok",
       inputSchema: zodToJsonSchema(GetArchitectureDiagramSchema),
     },
 
@@ -360,25 +342,12 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "detect_patterns",
-      description:
-        "[ANALYZE] Detect anti-patterns, best-patterns, code smells, and optimization opportunities. " +
-        "Uses structural analysis + semantic validation (embedding similarity with curated examples) " +
-        "to dramatically reduce false positives. Supports 100+ rules across 6 languages. " +
-        "Filters: category, tags, severity, minConfidence. " +
-        "Categories: anti-pattern (bad practices), best-pattern (good practices), " +
-        "code-smell (structural issues), optimization (performance improvements with Big-O). " +
-        "Includes JIT deoptimization detectors for JS/TS: hidden class violations (delete, with), " +
-        "holey arrays, megamorphic dispatch, spread in hot paths, dynamic property access in loops. " +
-        "Use tags=['jit'] to filter JIT-specific rules. " +
-        "Example: detect_patterns({category:'optimization', tags:['jit']}). " +
-        "📖 get_help(topic='patterns')",
+      description: "Detect design patterns and anti-patterns. max_results scales output. ~300-2000tok",
       inputSchema: zodToJsonSchema(DetectPatternsSchema),
     },
     {
       name: "check_entity_patterns",
-      description:
-        "[ANALYZE] Check specific entity for anti-patterns, best-patterns, and optimization opportunities. " +
-        "Returns matched patterns with confidence scores, Big-O analysis, and improvement suggestions.",
+      description: "Patterns matched by specific entity. ~200tok",
       inputSchema: zodToJsonSchema(CheckEntityPatternsSchema),
     },
 
@@ -387,12 +356,7 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "analyze_stacktrace",
-      description:
-        "[ANALYZE] Parse and diagnose stacktraces from any language (JS/TS, Python, Java/Kotlin, C#, Go, Rust, C/C++, Zig). " +
-        "Auto-detects language, resolves frames to code graph entities, classifies errors, " +
-        "runs backwards trace and impact analysis on crash point. " +
-        "Returns crash location, call chain, severity, suggested fixes, and Mermaid diagram. " +
-        "Example: analyze_stacktrace({stacktrace: '...error text...', format: 'text'}).",
+      description: "Parse stack trace, match to indexed entities. ~300-1000tok",
       inputSchema: zodToJsonSchema(AnalyzeStacktraceSchema),
     },
 
@@ -401,8 +365,7 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "taint_analysis",
-      description:
-        "[SECURITY] Interprocedural taint analysis: trace untrusted data from sources (req.body, process.env, fetch) to sinks (eval, exec, innerHTML, db.query) and detect missing sanitization. Categories: sql_injection, xss, command_injection, path_traversal, ssrf, prototype_pollution, missing_auth. The missing_auth category detects API endpoints (REST, gRPC, GraphQL) without authorization checks reaching sensitive operations. Returns vulnerability flows with severity, confidence, and fix suggestions. Supports offset/limit pagination for large results. Example: taint_analysis({category:'missing_auth', offset:0, limit:10}).",
+      description: "Find taint flows: SQLi, XSS, cmd injection, path traversal, SSRF. ~200-2000tok",
       inputSchema: zodToJsonSchema(TaintAnalysisSchema),
     },
 
@@ -411,22 +374,22 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "get_graph",
-      description: "[INFO] Get the code graph with all entities and relationships",
+      description: "Code graph overview with sample nodes. ~200-1000tok",
       inputSchema: zodToJsonSchema(GetGraphSchema),
     },
     {
       name: "get_graph_stats",
-      description: "[INFO] Get statistics about the code graph",
+      description: "Entity/relationship counts and density. ~100tok",
       inputSchema: zodToJsonSchema(GetGraphStatsSchema),
     },
     {
       name: "reset_graph",
-      description: "[SYSTEM] Clear all graph data (entities, relationships, files)",
+      description: "Clear graph and DB. Needs reindex. ~50tok",
       inputSchema: zodToJsonSchema(z.object({})),
     },
     {
       name: "get_graph_health",
-      description: "[INFO] Health check for graph storage (totals + sample)",
+      description: "Graph health: entities, orphans, samples. ~200tok",
       inputSchema: zodToJsonSchema(GetGraphHealthSchema),
     },
 
@@ -435,33 +398,32 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "get_metrics",
-      description: "[INFO] Get system metrics and agent performance statistics",
+      description: "Server perf: uptime, memory, DB sizes. ~300tok",
       inputSchema: zodToJsonSchema(z.object({})),
     },
     {
       name: "get_version",
-      description: "[INFO] Get MCP server version information and runtime details",
+      description: "Server version and platform info. ~50tok",
       inputSchema: zodToJsonSchema(z.object({})),
     },
     {
       name: "get_agent_metrics",
-      description: "[INFO] Collect runtime telemetry for conductor and registered agents",
+      description: "Internal entity/relationship/file counts. ~200tok",
       inputSchema: zodToJsonSchema(GetAgentMetricsSchema),
     },
     {
       name: "get_bus_stats",
-      description: "[INFO] Inspect knowledge bus statistics (topics, entries, subscriptions)",
+      description: "Event bus topic subscription counts. ~100tok",
       inputSchema: zodToJsonSchema(GetBusStatsSchema),
     },
     {
       name: "clear_bus_topic",
-      description: "[SYSTEM] Remove cached knowledge entries for a specific topic",
+      description: "Clear event bus topic handlers. ~50tok",
       inputSchema: zodToJsonSchema(ClearBusTopicSchema),
     },
     {
       name: "get_watcher_status",
-      description:
-        "[INFO] Get FileWatcher and GitWatcher status for diagnostics. Shows if background workers are running for incremental parsing and embedding generation.",
+      description: "File/git watcher status. ~200tok",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
 
@@ -470,23 +432,22 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "create_snapshot",
-      description:
-        "[MODIFY] Create a version snapshot for rollback. Uses git stash if available, otherwise .backup/ directory. Returns snapshot ID for rollback.",
+      description: "Create undo snapshot of current state. ~100tok",
       inputSchema: zodToJsonSchema(CreateSnapshotSchema),
     },
     {
       name: "undo",
-      description: "[MODIFY] Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
+      description: "Restore previous snapshot. ~100tok",
       inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
     },
     {
       name: "list_snapshots",
-      description: "[MODIFY] List available snapshots with creation time and description.",
+      description: "List available snapshots. ~200tok",
       inputSchema: zodToJsonSchema(ListSnapshotsSchema),
     },
     {
       name: "cleanup_snapshots",
-      description: "[MODIFY] Delete old snapshots to free disk space.",
+      description: "Remove snapshots older than N days. ~100tok",
       inputSchema: zodToJsonSchema(CleanupSnapshotsSchema),
     },
 
@@ -495,50 +456,42 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "modify_code",
-      description:
-        "[MODIFY] Safe code modification with auto-snapshot, validation, rollback. Modifies specific entity by ID (get ID via get_members first). Preview mode by default (no changes). Set apply=true for real changes. Workflow: 1) get_members(file='...'), 2) modify_code(entityId='...', newCode='...', preview=false, apply=true). Auto-validates syntax, updates embeddings. 📖 get_help(topic='workflows').",
+      description: "Modify code: entity/search-replace/line-range modes. Auto-snapshots. ~200-500tok",
       inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
     },
     {
       name: "copy_file",
-      description:
-        "[MODIFY] Copy file or directory with automatic graph updates. Streaming for large files. Token-efficient alternative to reading full content.",
+      description: "Copy file within project. ~100tok",
       inputSchema: zodToJsonSchema(CopyFileSchema),
     },
     {
       name: "rename_file",
-      description:
-        "[MODIFY] Rename file with automatic import updates across project. Updates graph and embeddings. Token-efficient alternative to read-write pattern.",
+      description: "Rename/move file. ~100tok",
       inputSchema: zodToJsonSchema(RenameFileSchema),
     },
     {
       name: "split_file",
-      description:
-        "[MODIFY] Extract entities from a file into separate files. Useful for refactoring large files. Updates graph with new locations.",
+      description: "Split file into multiple by line ranges. ~200tok",
       inputSchema: zodToJsonSchema(SplitFileSchema),
     },
     {
       name: "synthesize_files",
-      description:
-        "[MODIFY] Combine multiple files into one. Merges entities in graph. Can optionally delete originals. Token-efficient way to consolidate code.",
+      description: "Merge multiple files into one. ~100tok",
       inputSchema: zodToJsonSchema(SynthesizeFilesSchema),
     },
     {
       name: "create_file",
-      description:
-        "[MODIFY] Create a new file with content. Automatically parses and adds entities to graph. Unified naming with UltrasharpTools.",
+      description: "Create new file with content. ~100tok",
       inputSchema: zodToJsonSchema(CreateFileSchema),
     },
     {
       name: "rename_symbol",
-      description:
-        "[MODIFY] Safe rename across project: updates ALL references automatically. Works on variables, functions, classes, etc. Find via entity ID (get_members) or name+file. Creates snapshot before changes. Example: rename_symbol(entityName='oldName', newName='newName', filePath='src/utils.ts'). Much safer than manual find-replace. 📖 get_help(topic='workflows').",
+      description: "Rename symbol across project (word-boundary). Auto-snapshots. ~200tok",
       inputSchema: zodToJsonSchema(RenameSymbolSchema),
     },
     {
       name: "add_member",
-      description:
-        "[MODIFY] Add a new member (method, property, field) to a class or interface. Supports precise positioning. Unified naming with UltrasharpTools.",
+      description: "Add code to class/file at start or end. ~100tok",
       inputSchema: zodToJsonSchema(AddMemberSchema),
     },
 
@@ -547,14 +500,12 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "validate_file",
-      description:
-        "[ANALYZE] Validate code file using appropriate linter (oxlint for JS/TS, Pylint for Python). Supports automatic fixes with fixable parameter and auto-detection of linter based on project config (biome.json, .eslintrc). Returns problems categorized by severity.",
+      description: "Lint/validate source file. ~200tok",
       inputSchema: zodToJsonSchema(ValidateFileSchema),
     },
     {
       name: "validate_directory",
-      description:
-        "[ANALYZE] Validate all code files in directory with batch processing. Supports automatic fixes with fixable parameter and auto-detection of linter. Returns aggregated validation report.",
+      description: "Lint all files in directory. limit scales output. ~200-1000tok",
       inputSchema: zodToJsonSchema(ValidateDirectorySchema),
     },
 
@@ -563,25 +514,22 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "semantic_merge",
-      description:
-        "[MERGE] AI-powered semantic merge of git branches. Automatically finds merge-base, reads files from branches, performs semantic 3-way merge, and writes results as unstaged changes. Supports dry-run mode and auto-resolve.",
+      description: "AI semantic 3-way merge. ~200-1000tok",
       inputSchema: zodToJsonSchema(SemanticMergeSchema),
     },
     {
       name: "analyze_merge_conflicts",
-      description:
-        "[MERGE] Analyze potential merge conflicts between two branches without performing the merge. Returns conflicts with severity classification and affected code units.",
+      description: "Potential merge conflicts between branches. ~200-1000tok",
       inputSchema: zodToJsonSchema(AnalyzeMergeConflictsSchema),
     },
     {
       name: "get_merge_suggestions",
-      description:
-        "[MERGE] Get AI-generated suggestions for resolving a specific merge conflict. Requires conflict ID from analyze_merge_conflicts.",
+      description: "Suggest mergeable branches. ~200tok",
       inputSchema: zodToJsonSchema(GetMergeSuggestionsSchema),
     },
     {
       name: "get_semantic_merge_info",
-      description: "[MERGE] Get information about semantic merge capabilities, supported features, and usage examples.",
+      description: "Semantic merge engine capabilities. ~200tok",
       inputSchema: zodToJsonSchema(GetSemanticMergeInfoSchema),
     },
 
@@ -590,62 +538,57 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "autodoc_init",
-      description:
-        "[DOC] Initialize AutoDoc semantic documentation layer. Configure language, docs directory, and enable/disable.",
+      description: "Init AutoDoc (.autodoc/ dir). ~100tok",
       inputSchema: zodToJsonSchema(AutoDocInitSchema),
     },
     {
       name: "autodoc_save",
-      description:
-        "[DOC] Save a markdown documentation file. Parses sections, extracts references to code entities, and indexes for search.",
+      description: "Save doc content for entity. ~100tok",
       inputSchema: zodToJsonSchema(AutoDocSaveSchema),
     },
     {
       name: "autodoc_get",
-      description: "[DOC] Get documentation by ID or file path. Returns parsed sections with metadata.",
+      description: "Get doc by ID. ~300tok",
       inputSchema: zodToJsonSchema(AutoDocGetSchema),
     },
     {
       name: "autodoc_search",
-      description: "[DOC] Search documentation by text query. Returns matching sections with relevance scores.",
+      description: "Search documentation. ~200-1000tok",
       inputSchema: zodToJsonSchema(AutoDocSearchSchema),
     },
     {
       name: "autodoc_validate",
-      description:
-        "[DOC] Validate documentation references. Checks that all code entity references point to existing entities.",
+      description: "Validate entity docs exist. ~200tok",
       inputSchema: zodToJsonSchema(AutoDocValidateSchema),
     },
     {
       name: "autodoc_status",
-      description: "[DOC] Get AutoDoc status including statistics on documents, references, and broken links.",
+      description: "AutoDoc status: init state, doc count. ~100tok",
       inputSchema: zodToJsonSchema(AutoDocStatusSchema),
     },
     {
       name: "autodoc_sync",
-      description: "[DOC] Sync documentation with code changes. Validates references and marks outdated docs.",
+      description: "Sync docs between DB and .autodoc/ files. ~200tok",
       inputSchema: zodToJsonSchema(AutoDocSyncSchema),
     },
     {
       name: "autodoc_generate",
-      description:
-        "[DOC] Auto-generate documentation for the codebase. Creates .autodoc/ for general docs and README.md in each module folder.",
+      description: "Generate docs for entity. ~300tok",
       inputSchema: zodToJsonSchema(AutoDocGenerateSchema),
     },
     {
       name: "autodoc_changelog",
-      description: "[DOC] View documentation change history. Shows what docs were affected by code changes.",
+      description: "Doc change history. ~200tok",
       inputSchema: zodToJsonSchema(AutoDocChangelogSchema),
     },
     {
       name: "autodoc_install_hooks",
-      description:
-        "[DOC] Install or uninstall git pre-commit hooks for documentation validation. Ensures references are valid before commits.",
+      description: "Install git hooks for AutoDoc. ~100tok",
       inputSchema: zodToJsonSchema(AutoDocInstallHooksSchema),
     },
     {
       name: "autodoc_detect_language",
-      description: "[DOC] Detect documentation language from code comments and existing docs. Supports en, ru, zh.",
+      description: "Detect file language. ~50tok",
       inputSchema: zodToJsonSchema(AutoDocDetectLanguageSchema),
     },
 
@@ -664,25 +607,22 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "get_entity_history",
-      description:
-        "[HISTORY] Get change history for a specific entity across commits. Shows when entity was added, modified, or deleted.",
+      description: "Git history for entity's file. ~300tok",
       inputSchema: zodToJsonSchema(GetEntityHistorySchema),
     },
     {
       name: "diff_commits",
-      description: "[HISTORY] Compare two graph commits and show differences (added, modified, deleted entities).",
+      description: "Diff stats between two commits. ~200-1000tok",
       inputSchema: zodToJsonSchema(DiffCommitsSchema),
     },
     {
       name: "checkout_commit",
-      description:
-        "[HISTORY] View graph state at a specific commit (time travel). Retrieve entity snapshots from historical versions.",
+      description: "Checkout commit (auto-snapshots). ~100tok",
       inputSchema: zodToJsonSchema(CheckoutCommitSchema),
     },
     {
       name: "list_commits",
-      description:
-        "[HISTORY] List graph commits (version history). Shows commit hashes, messages, entity counts, and timestamps.",
+      description: "Recent git commits. limit scales output. ~300tok",
       inputSchema: zodToJsonSchema(ListCommitsSchema),
     },
 
@@ -691,32 +631,22 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "spawn_agent_worktree",
-      description:
-        "[WORKTREE] Create a git worktree for a new branch and prepare for agent connection. " +
-        "Returns the worktree path and connection instructions. Use for multi-agent parallel development " +
-        "where each agent works on a separate branch in its own worktree.",
+      description: "Create git worktree for parallel work. ~100tok",
       inputSchema: zodToJsonSchema(SpawnAgentWorktreeSchema),
     },
     {
       name: "list_worktree_agents",
-      description:
-        "[WORKTREE] List all worktrees and active agent sessions for the current repository. " +
-        "Shows which worktrees have connected agents and their branches.",
+      description: "List git worktrees. ~200tok",
       inputSchema: zodToJsonSchema(ListWorktreeAgentsSchema),
     },
     {
       name: "cleanup_worktree",
-      description:
-        "[WORKTREE] Remove a git worktree by branch name. The associated agent session " +
-        "will be disconnected automatically.",
+      description: "Remove git worktree. ~50tok",
       inputSchema: zodToJsonSchema(CleanupWorktreeSchema),
     },
     {
       name: "get_worktree_info",
-      description:
-        "[WORKTREE] Get detailed information about worktrees, submodules, and subtrees " +
-        "for the current repository. Shows repo identity, sibling worktrees, active sessions, " +
-        "and detected submodules/subtrees.",
+      description: "Git worktree info. ~200tok",
       inputSchema: zodToJsonSchema(GetWorktreeInfoSchema),
     },
 
@@ -725,69 +655,47 @@ export function getToolsList(): ToolDefinition[] {
     // ==========================================================================
     {
       name: "grep_index",
-      description:
-        "[SEARCH] Fast trigram-accelerated text/regex search across project files. " +
-        "Uses pre-built trigram index for O(1) candidate filtering before verification. " +
-        "Much faster than ripgrep for large codebases with indexed trigrams.",
+      description: "Trigram-indexed text/regex search across files. context_lines scales output. ~300-3000tok",
       inputSchema: zodToJsonSchema(GrepIndexSchema),
     },
     {
       name: "batch_modify",
-      description:
-        "[MODIFY] Mass-modify entities matching conditions. Actions: rename, replace, remove, wrap. " +
-        "Filter by entity_type, name_matches, file_pattern, is_exported, is_async, min_complexity. " +
-        "Use 'semantic' for natural language queries (e.g. 'god classes', 'async handlers without error handling'). " +
-        "Preview by default — set apply=true to execute.",
+      description: "Mass-modify entities: rename/replace/remove/wrap. Preview by default. ~200-2000tok",
       inputSchema: zodToJsonSchema(BatchModifySchema),
     },
     {
       name: "batch_rename",
-      description:
-        "[MODIFY] Rename multiple symbols matching a pattern. Simpler interface than batch_modify. " +
-        "Preview by default — set apply=true to execute.",
+      description: "Mass-rename symbols with filters. Preview by default. ~200-1000tok",
       inputSchema: zodToJsonSchema(BatchRenameSchema),
     },
     {
       name: "security_scan",
-      description:
-        "[ANALYSIS] Run security vulnerability scanners on the codebase. Detects: SQL injection, XSS, " +
-        "command injection, dangerous functions, hardcoded secrets, insecure crypto, god classes.",
+      description: "Security scan: SQLi, XSS, secrets, dangerous functions. limit scales output. ~300-2000tok",
       inputSchema: zodToJsonSchema(SecurityScanSchema),
     },
     {
       name: "get_review_context",
-      description:
-        "[ANALYSIS] Get minimal review context for a set of changed files (PR review). " +
-        "Returns affected entities, dependency depth, token estimates, and files to review vs skip.",
+      description: "Review context for changed files: affected entities, skip list. ~200-1000tok",
       inputSchema: zodToJsonSchema(GetReviewContextSchema),
     },
     {
       name: "detect_architecture_layers",
-      description:
-        "[ANALYSIS] Detect architecture layers in the project. Classifies files into: " +
-        "API, Service, Data, UI, Middleware, Config, Test, Utility. Shows cross-layer dependencies.",
+      description: "Detect architecture layers (API/Service/Data/UI). ~300tok",
       inputSchema: zodToJsonSchema(DetectArchitectureLayersSchema),
     },
     {
       name: "generate_onboarding",
-      description:
-        "[INFO] Generate a project-specific onboarding tour for new developers. " +
-        "Finds entry points, detects architecture, scores entities by importance, " +
-        "creates step-by-step guided tour.",
+      description: "Onboarding tour for new developers. max_steps scales output. ~500-2000tok",
       inputSchema: zodToJsonSchema(GenerateOnboardingSchema),
     },
     {
       name: "autodoc_batch_generate",
-      description:
-        "[AUTODOC] Generate module-level AUTODOC.md documentation for changed directories. " +
-        "Use enrich=true to rewrite with LLM. Use target for a specific directory.",
+      description: "Batch module-level AUTODOC.md generation. ~200tok",
       inputSchema: zodToJsonSchema(AutoDocBatchGenerateSchema),
     },
     {
       name: "setup_embedding",
-      description:
-        "[CONFIG] Configure embedding inference. Detects available devices (CUDA GPU, Vulkan, " +
-        "Intel NPU/iGPU, CPU), selects optimal model, configures inference workers.",
+      description: "Configure local embedding inference (GPU/NPU/CPU). ~300tok",
       inputSchema: zodToJsonSchema(SetupEmbeddingSchema),
     },
   ];

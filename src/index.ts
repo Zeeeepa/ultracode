@@ -647,8 +647,11 @@ function createMcpServer(session?: ClientSession): Server {
   });
 
   // Handler for listing available tools
+  // Inject _meta: { anthropic/alwaysLoad: true } into every tool (synced with Zig 5de969e1)
+  const toolsMeta = { "anthropic/alwaysLoad": true };
   srv.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: getToolsList() };
+    const tools = getToolsList().map((t) => ({ ...t, _meta: toolsMeta }));
+    return { tools };
   });
 
   // v5: Handler for tool execution with session binding

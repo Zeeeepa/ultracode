@@ -36,32 +36,30 @@ export const GetChangedFilesSchema = z.object({
 export const branchToolDefinitions = [
   {
     name: "list_branches",
-    description:
-      "[BRANCH] List all indexed branches for the current repository. Shows branch names, last accessed time, database size, and metadata (entity count, last commit, etc.).",
+    description: "List git branches. ~200tok",
     inputSchema: {
       type: "object",
       properties: {
         repositoryPath: {
           type: "string",
-          description: "Path to Git repository (defaults to current directory)",
+          description: "Repository path",
         },
       },
     },
   },
   {
     name: "switch_branch",
-    description:
-      "[BRANCH] Switch active branch for indexing. Changes the database context to the specified branch. Note: You may need to reindex if switching to a branch that hasn't been indexed yet.",
+    description: "Switch git branch. ~100tok",
     inputSchema: {
       type: "object",
       properties: {
         branch: {
           type: "string",
-          description: "Name of the branch to switch to",
+          description: "Branch name",
         },
         repositoryPath: {
           type: "string",
-          description: "Path to Git repository (defaults to current directory)",
+          description: "Repository path",
         },
       },
       required: ["branch"],
@@ -69,46 +67,43 @@ export const branchToolDefinitions = [
   },
   {
     name: "get_branch_status",
-    description:
-      "[BRANCH] Get detailed status of the current branch including last commit hash, entity count, relationship count, and database information.",
+    description: "Current branch: modified/added/deleted/untracked files. ~200tok",
     inputSchema: {
       type: "object",
       properties: {
         repositoryPath: {
           type: "string",
-          description: "Path to Git repository (defaults to current directory)",
+          description: "Repository path",
         },
       },
     },
   },
   {
     name: "cleanup_branches",
-    description:
-      "[BRANCH] Cleanup old branch databases using LRU eviction strategy. Removes least recently used branches while keeping the specified number of most recent branches.",
+    description: "Delete merged branches. ~200tok",
     inputSchema: {
       type: "object",
       properties: {
         keep: {
           type: "number",
-          description: "Number of most recently used branches to keep (defaults to config value)",
+          description: "Branches to keep (default: config value)",
         },
       },
     },
   },
   {
     name: "get_changed_files",
-    description:
-      "[BRANCH] Get list of files changed between two branches. Useful for determining scope of changes before switching branches or for incremental reindexing.",
+    description: "Changed files vs reference commit. ~200tok",
     inputSchema: {
       type: "object",
       properties: {
         fromBranch: {
           type: "string",
-          description: "Source branch name",
+          description: "Source branch",
         },
         toBranch: {
           type: "string",
-          description: "Target branch name",
+          description: "Target branch",
         },
       },
       required: ["fromBranch", "toBranch"],

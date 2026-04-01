@@ -11,6 +11,7 @@ import { type AutoIndexResult, performAutoIndex } from "../../core/auto-indexer.
 import { getIndexingStatus, isIndexing } from "../../core/indexing-state.js";
 import { log } from "../../logging/index.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { setIndexStatus } from "../tool-definitions.js";
 
 const DEFAULT_EXTENSIONS: string[] = [...SUPPORTED_CODE_EXTENSIONS];
 
@@ -129,6 +130,12 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       entities: result.entityCount,
       durMs: result.duration,
     });
+
+    // Update dynamic tool description for tools/list (synced with Zig 5de969e1)
+    if (result.success) {
+      const hasSemantic = (result.embeddingStats?.generated ?? 0) > 0;
+      setIndexStatus(result.entityCount, hasSemantic);
+    }
 
     return {
       content: [

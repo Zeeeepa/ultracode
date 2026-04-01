@@ -8,36 +8,34 @@
 export const traceToolDefinitions = [
   {
     name: "trace_flow",
-    description:
-      "[PLAN] Static analysis: trace execution from A→B. Use when: 'How does code get from login() to saveUser()?', 'What paths lead to handleError()?'. Finds ALL possible paths with state changes, conditions, async boundaries. Returns confidence-scored paths + optional Mermaid diagrams. Supports highlightRecentChanges to annotate recently modified nodes. Example: trace_flow(from='handleRequest', to='sendEmail', highlightRecentChanges=true). 📖 get_help(topic='tracing') for guide.",
+    description: "Trace execution path A to B via BFS. format=mermaid adds ~500tok. ~300-2000tok",
     inputSchema: {
       type: "object",
       properties: {
-        from: { type: "string", description: "Starting point (function/method name or semantic query)" },
-        to: { type: "string", description: "Ending point (function/method name or semantic query)" },
-        trackStates: { type: "boolean", description: "Track state changes along paths", default: true },
-        trackConditions: { type: "boolean", description: "Track conditions/branches", default: true },
-        maxDepth: { type: "number", description: "Maximum traversal depth", default: 15 },
+        from: { type: "string", description: "Source entity" },
+        to: { type: "string", description: "Target entity" },
+        trackStates: { type: "boolean", description: "Track state changes", default: true },
+        trackConditions: { type: "boolean", description: "Track conditions", default: true },
+        maxDepth: { type: "number", description: "Max depth (default 15)", default: 15 },
         format: {
           type: "string",
           enum: ["sequence", "tree", "graph", "mermaid"],
-          description: "Output format",
+          description: "sequence | tree | graph | mermaid (adds ~500tok)",
           default: "sequence",
         },
         highlightRecentChanges: {
           type: "boolean",
-          description: "Annotate trace nodes with recently-changed status (Prolly Tree)",
+          description: "Annotate recently changed",
           default: false,
         },
         recentCommitsCount: {
           type: "number",
-          description: "Number of recent commits to consider for highlighting",
+          description: "Recent commits count",
           default: 10,
         },
         projectPath: {
           type: "string",
-          description:
-            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+          description: "Project dir",
         },
       },
       required: ["from", "to"],
@@ -45,34 +43,32 @@ export const traceToolDefinitions = [
   },
   {
     name: "trace_backwards",
-    description:
-      "[PLAN] Static analysis: why isn't method called? Use when: 'Why doesn't processPayment() run?', 'What blocks saveUser()?'. Questions: 'why_not_called' (find blockers), 'what_affects' (dependencies), 'dependencies' (full graph). Returns callers, blocking conditions, state deps, diagnosis. Supports highlightRecentChanges to annotate recently modified callers. Example: trace_backwards(target='sendNotification', question='why_not_called', highlightRecentChanges=true). 📖 get_help(topic='tracing').",
+    description: "Find all callers of target entity. ~200-1500tok",
     inputSchema: {
       type: "object",
       properties: {
-        target: { type: "string", description: "Target method/function to analyze" },
+        target: { type: "string", description: "Target entity name" },
         question: {
           type: "string",
           enum: ["why_not_called", "what_affects", "dependencies"],
-          description: "Type of analysis",
+          description: "dependencies (callers) | why_not_called (dead code) | what_affects (upstream files)",
         },
-        depth: { type: "number", description: "Backward traversal depth", default: 15 },
-        includeStates: { type: "boolean", description: "Include state dependencies", default: true },
+        depth: { type: "number", description: "Max depth (default 15)", default: 15 },
+        includeStates: { type: "boolean", description: "Include state deps", default: true },
         includeEffects: { type: "boolean", description: "Include side effects", default: true },
         highlightRecentChanges: {
           type: "boolean",
-          description: "Annotate trace nodes with recently-changed status (Prolly Tree)",
+          description: "Annotate recently changed",
           default: false,
         },
         recentCommitsCount: {
           type: "number",
-          description: "Number of recent commits to consider for highlighting",
+          description: "Recent commits count",
           default: 10,
         },
         projectPath: {
           type: "string",
-          description:
-            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+          description: "Project dir",
         },
       },
       required: ["target", "question"],
@@ -80,8 +76,7 @@ export const traceToolDefinitions = [
   },
   {
     name: "trace_data_flow",
-    description:
-      "[PLAN] Static analysis: trace data flow from sources→target state. Use when: 'How does user input affect isValid?', 'What data feeds into price calculation?'. Identifies sources, transformations, branching, builds behavior matrix. Example: trace_data_flow(entryPoint='handleSubmit', targetState='form.errors'). 📖 get_help(topic='tracing').",
+    description: "Trace data flow from entity through call chains. ~200-1500tok",
     inputSchema: {
       type: "object",
       properties: {
@@ -90,13 +85,12 @@ export const traceToolDefinitions = [
         dataSources: {
           type: "array",
           items: { type: "string" },
-          description: "Data sources to analyze (auto-detected if not specified)",
+          description: "Data sources (auto-detected if omitted)",
         },
-        trackTransformations: { type: "boolean", description: "Track data transformations", default: true },
+        trackTransformations: { type: "boolean", description: "Classify source/transform/sink", default: true },
         projectPath: {
           type: "string",
-          description:
-            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+          description: "Project dir",
         },
       },
       required: ["entryPoint", "targetState"],
@@ -104,12 +98,11 @@ export const traceToolDefinitions = [
   },
   {
     name: "analyze_state_impact",
-    description:
-      "[PLAN] Analyze the impact of a state variable across different scenarios. Shows usages, reachable/blocked paths per scenario, conflicts, and ripple effects.",
+    description: "What entities/files break when entity changes. ~200-1500tok",
     inputSchema: {
       type: "object",
       properties: {
-        state: { type: "string", description: "State variable to analyze" },
+        state: { type: "string", description: "State variable" },
         scenarios: {
           type: "array",
           items: {
@@ -117,14 +110,13 @@ export const traceToolDefinitions = [
             properties: { value: {}, label: { type: "string" } },
             required: ["value", "label"],
           },
-          description: "Scenarios to analyze",
+          description: "What-If scenarios",
           minItems: 1,
         },
-        scope: { type: "string", description: "Scope of analysis (semantic query)" },
+        scope: { type: "string", description: "Scope (semantic query)" },
         projectPath: {
           type: "string",
-          description:
-            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+          description: "Project dir",
         },
       },
       required: ["state", "scenarios"],
@@ -132,24 +124,22 @@ export const traceToolDefinitions = [
   },
   {
     name: "find_decision_points",
-    description:
-      "[PLAN] Find all decision points in a scenario's execution flow. Types: validation, api_response, state_mutation, guard, loop, error_handling, feature_flag. Returns grouped by impact with Mermaid flowchart.",
+    description: "Find branching points in code flow. ~200-1000tok",
     inputSchema: {
       type: "object",
       properties: {
         scenario: { type: "string", description: "Scenario to analyze" },
-        includeGuards: { type: "boolean", description: "Include guard conditions", default: true },
+        includeGuards: { type: "boolean", description: "Include guards", default: true },
         includeEffects: { type: "boolean", description: "Include side effects", default: true },
         groupBy: {
           type: "string",
           enum: ["impact", "location", "type"],
-          description: "How to group results",
+          description: "impact | location | type",
           default: "impact",
         },
         projectPath: {
           type: "string",
-          description:
-            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+          description: "Project dir",
         },
       },
       required: ["scenario"],
