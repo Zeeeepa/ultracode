@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { log } from "../../logging/index.js";
 import { detectRuntime, type Runtime } from "../../shared/runtime-detect.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
+import { sleep } from "../../utils/runtime-detection.js";
 
 // Runtime-aware worker type
 type NodeWorker = import("node:worker_threads").Worker;
@@ -32,15 +33,6 @@ type AnyWorker = BunWorker | NodeWorker;
 // =============================================================================
 // TYPES
 // =============================================================================
-
-/**
- * Bun global interface for runtime detection
- */
-interface BunGlobal {
-  Bun?: {
-    sleep?: (ms: number) => Promise<void>;
-  };
-}
 
 /**
  * Worker ready message
@@ -245,18 +237,6 @@ export class LanguageWorkerPool {
   }
 
   /**
-   * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
-   */
-  private async sleep(ms: number): Promise<void> {
-    const bunGlobal = globalThis as BunGlobal;
-    if (bunGlobal.Bun?.sleep && typeof bunGlobal.Bun.sleep === "function") {
-      await bunGlobal.Bun.sleep(ms);
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, ms));
-    }
-  }
-
-  /**
    * Create a new worker (runtime-aware)
    * - Node.js: worker_threads (native, stable)
    * - Bun: Web Worker API with smol mode (reduced memory)
@@ -341,7 +321,7 @@ export class LanguageWorkerPool {
       const startTime = Date.now();
       const checkTimeout = async () => {
         while (!resolved && Date.now() - startTime < 10000) {
-          await this.sleep(10); // Real sleep without busy-wait
+          await sleep(10); // Real sleep without busy-wait
         }
         if (!resolved) {
           if (!this.workers.has(workerId)) {
@@ -452,7 +432,7 @@ export class LanguageWorkerPool {
       const startTime = Date.now();
       const checkTaskTimeout = async () => {
         while (!task.timeoutAbort && Date.now() - startTime < this.taskTimeout) {
-          await this.sleep(50); // Real sleep without busy-wait
+          await sleep(50); // Real sleep without busy-wait
           if (!this.pendingTasks.has(taskId)) return; // Task completed
         }
         if (this.pendingTasks.has(taskId) && !task.timeoutAbort) {
@@ -710,7 +690,7 @@ export class LanguageWorkerPool {
           const startTime = Date.now();
           const checkShutdownTimeout = async () => {
             while (!resolved && Date.now() - startTime < 5000) {
-              await this.sleep(50); // Real sleep without busy-wait
+              await sleep(50); // Real sleep without busy-wait
             }
             if (!resolved) {
               if (this.runtime === "bun") {
@@ -730,7 +710,7 @@ export class LanguageWorkerPool {
             const terminateStart = Date.now();
             const delayedTerminate = async () => {
               while (Date.now() - terminateStart < 1000) {
-                await this.sleep(50); // Real sleep without busy-wait
+                await sleep(50); // Real sleep without busy-wait
               }
               resolved = true;
               bunWorker.terminate();

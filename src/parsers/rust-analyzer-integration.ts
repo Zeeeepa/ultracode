@@ -17,6 +17,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
+import { sleep } from "../utils/runtime-detection.js";
 
 // =============================================================================
 // TYPE DEFINITIONS
@@ -50,17 +51,6 @@ interface ParsedEntityWithRAInfo extends ParsedEntity {
     kind: string;
     detail: string;
   };
-}
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof globalThis.Bun?.sleep === "function") {
-    await globalThis.Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
 }
 
 // =============================================================================

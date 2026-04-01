@@ -74,7 +74,7 @@ function buildCandidates(): DetectionCandidate[] {
     {
       provider: "tei",
       model: "BAAI/bge-m3",
-      url: "http://127.0.0.1:8081/health",
+      url: "http://127.0.0.1:8282/health",
       label: "TEI",
     },
   );
@@ -275,7 +275,7 @@ const builders = new Map<string, BuilderFn>([
     "tei",
     (model, opts) => {
       log.i("FACTORY", `Creating TEI provider`, { tei: opts.tei });
-      log.i("FACTORY", `TEI baseUrl=${opts.tei?.baseUrl || "UNDEFINED - will use default 8081"}`);
+      log.i("FACTORY", `TEI baseUrl=${opts.tei?.baseUrl || "UNDEFINED - will use default 8282"}`);
       return new TEIProvider({
         model,
         baseUrl: opts.tei?.baseUrl,

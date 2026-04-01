@@ -29,7 +29,7 @@ export interface TEIOptions {
  * TEI is HuggingFace's optimized inference server for embeddings.
  *
  * Setup:
- * docker run -d --name tei-server -p 8081:80 \
+ * docker run -d --name tei-server -p 8282:80 \
  *   --pull always \
  *   ghcr.io/huggingface/text-embeddings-inference:latest \
  *   --model-id ibm-granite/granite-embedding-english-r2
@@ -45,7 +45,7 @@ export class TEIProvider implements EmbeddingProvider {
 
   constructor(opts: TEIOptions) {
     this.log = opts.logger;
-    this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:8081";
+    this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:8282";
     this.timeoutMs = opts.timeoutMs ?? 30_000;
     this.concurrency = Math.max(1, opts.concurrency ?? 16); // High concurrency for GPU saturation
     this.checkServer = opts.checkServer !== false;
@@ -119,22 +119,54 @@ export class TEIProvider implements EmbeddingProvider {
     } catch (error: unknown) {
       const err = toError(error);
       this.log?.error("warmup failed", { error: err.message }, undefined, err);
+      const suggestedImage = this.getCorrectImageTag();
       throw new Error(
         `TEI warmup failed: ${err.message}\n` +
           `Make sure TEI Docker container is running:\n` +
-          `docker run -d --name tei-server -p 8081:80 \\\n` +
-          `  ghcr.io/huggingface/text-embeddings-inference:latest \\\n` +
+          `docker run -d --name tei-server -p 8282:80 \\\n` +
+          `  ${suggestedImage} \\\n` +
           `  --model-id ${this.info.model}`,
       );
     }
   }
 
   /**
-   * Ensure TEI Docker container is running, start it if it exists but is stopped
+   * Detect GPU compute capability via nvidia-smi.
+   * Returns 0 if no GPU / nvidia-smi unavailable.
+   */
+  private detectComputeCap(): number {
+    try {
+      const { spawnSync } = require("node:child_process");
+      const result = spawnSync("nvidia-smi", ["--query-gpu=compute_cap", "--format=csv,noheader,nounits"], {
+        encoding: "utf-8",
+        timeout: 5000,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      return result.status === 0 ? parseFloat((result.stdout as string).trim()) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Get correct TEI Docker image tag for the detected GPU.
+   * Blackwell (compute_cap >= 10.0) needs the 120-latest build.
+   */
+  private getCorrectImageTag(): string {
+    const cc = this.detectComputeCap();
+    if (cc >= 10.0) return "ghcr.io/huggingface/text-embeddings-inference:120-latest";
+    if (cc > 0) return "ghcr.io/huggingface/text-embeddings-inference:latest";
+    return "ghcr.io/huggingface/text-embeddings-inference:cpu-latest";
+  }
+
+  /**
+   * Ensure TEI Docker container is running with the correct image.
+   * Detects GPU, validates the container image, recreates if mismatched.
    */
   private async ensureContainerRunning(): Promise<void> {
     try {
-      // Check if container is already running
+      // Check if container is already running and healthy
       const healthCheck = await fetch(`${this.baseUrl}/health`, {
         method: "GET",
         signal: AbortSignal.timeout(2000),
@@ -148,7 +180,6 @@ export class TEIProvider implements EmbeddingProvider {
       // Container not responding, try to start it
       this.log?.info("TEI container not running, attempting to start...");
 
-      // Check if Docker is available
       const { exec } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execPromise = promisify(exec);
@@ -159,16 +190,36 @@ export class TEIProvider implements EmbeddingProvider {
         { windowsHide: true },
       ).catch(() => ({ stdout: "" }));
 
-      if (!containerList.includes("tei-server")) {
-        throw new Error("TEI Docker container 'tei-server' not found. Please run setup script first.");
+      const containerExists = containerList.includes("tei-server");
+
+      // If container exists, verify it uses the correct image for this GPU
+      if (containerExists) {
+        const correctImage = this.getCorrectImageTag();
+        const { stdout: currentImage } = await execPromise('docker inspect tei-server --format "{{.Config.Image}}"', {
+          windowsHide: true,
+        }).catch(() => ({ stdout: "" }));
+
+        const currentImageTrimmed = currentImage.trim();
+        if (currentImageTrimmed && currentImageTrimmed !== correctImage) {
+          this.log?.warn("TEI container image mismatch, recreating", {
+            current: currentImageTrimmed,
+            correct: correctImage,
+          });
+          await this.recreateContainer(execPromise, correctImage);
+        } else {
+          // Image OK — just start
+          await execPromise("docker start tei-server", { windowsHide: true });
+          this.log?.info("Started TEI Docker container");
+        }
+      } else {
+        // No container — create fresh with correct image
+        const correctImage = this.getCorrectImageTag();
+        this.log?.info("TEI container not found, creating with correct image", { image: correctImage });
+        await this.recreateContainer(execPromise, correctImage);
       }
 
-      // Start the container
-      await execPromise("docker start tei-server", { windowsHide: true });
-      this.log?.info("Started TEI Docker container");
-
-      // Wait for container to be ready (max 30 seconds)
-      const maxWaitTime = 5000;
+      // Wait for container to be ready
+      const maxWaitTime = 30_000;
       const startTime = Date.now();
       while (Date.now() - startTime < maxWaitTime) {
         const check = await fetch(`${this.baseUrl}/health`, {
@@ -181,8 +232,32 @@ export class TEIProvider implements EmbeddingProvider {
           return;
         }
 
-        // Wait 2 seconds before next check
         await sleep(2000);
+      }
+
+      // If still not ready, check logs for compute_cap errors and retry
+      const { stdout: logs } = await execPromise("docker logs tei-server --tail 20 2>&1", {
+        windowsHide: true,
+      }).catch(() => ({ stdout: "" }));
+
+      if (logs.includes("compute cap") || logs.includes("not compatible")) {
+        this.log?.warn("TEI container failed with compute cap mismatch, recreating...");
+        const correctImage = this.getCorrectImageTag();
+        await this.recreateContainer(execPromise, correctImage);
+
+        // Wait again after recreate
+        const retryStart = Date.now();
+        while (Date.now() - retryStart < maxWaitTime) {
+          const check = await fetch(`${this.baseUrl}/health`, {
+            method: "GET",
+            signal: AbortSignal.timeout(2000),
+          }).catch(() => null);
+          if (check?.ok) {
+            this.log?.info("TEI container ready after image fix");
+            return;
+          }
+          await sleep(2000);
+        }
       }
 
       throw new Error("TEI container started but did not become ready within 30 seconds");
@@ -191,6 +266,52 @@ export class TEIProvider implements EmbeddingProvider {
       this.log?.warn("Failed to auto-start TEI container", { error: err.message });
       throw new Error(`TEI auto-start failed: ${err.message}\nPlease start manually: docker start tei-server`);
     }
+  }
+
+  /**
+   * Remove old container and create a new one with the correct image.
+   */
+  private async recreateContainer(
+    execPromise: (cmd: string, opts?: Record<string, unknown>) => Promise<{ stdout: string }>,
+    imageTag: string,
+  ): Promise<void> {
+    // Get existing container config (model, port) before removing
+    const { stdout: inspectJson } = await execPromise('docker inspect tei-server --format "{{json .Config.Cmd}}"', {
+      windowsHide: true,
+    }).catch(() => ({ stdout: "" }));
+
+    // Extract model-id from existing container args, or use current provider model
+    let modelId = this.info.model;
+    if (inspectJson) {
+      try {
+        const cmd = JSON.parse(inspectJson.trim()) as string[];
+        const modelIdx = cmd.indexOf("--model-id");
+        if (modelIdx >= 0 && cmd[modelIdx + 1]) {
+          modelId = cmd[modelIdx + 1]!;
+        }
+      } catch {
+        /* use default */
+      }
+    }
+
+    // Detect GPU for --gpus flag
+    const hasGpu = this.detectComputeCap() > 0;
+
+    // Remove old container
+    await execPromise("docker stop tei-server", { windowsHide: true }).catch(() => {});
+    await execPromise("docker rm tei-server", { windowsHide: true }).catch(() => {});
+
+    // Extract port from baseUrl
+    const portMatch = this.baseUrl.match(/:(\d+)/);
+    const port = portMatch ? portMatch[1] : "8282";
+
+    // Create new container with correct image
+    let cmd = `docker run -d --name tei-server -p ${port}:80 --restart unless-stopped`;
+    if (hasGpu) cmd += " --gpus all";
+    cmd += ` "${imageTag}" --model-id "${modelId}" --max-concurrent-requests 512`;
+
+    this.log?.info("Creating TEI container", { image: imageTag, model: modelId, gpu: hasGpu });
+    await execPromise(cmd, { windowsHide: true, env: { ...process.env, MSYS_NO_PATHCONV: "1" } });
   }
 
   /**

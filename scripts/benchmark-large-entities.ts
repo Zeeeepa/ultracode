@@ -12,7 +12,7 @@ import * as fs from "fs";
 import { chunkCode, estimateTokens as chunkEstimateTokens } from "../src/semantic/smart-chunker.js";
 
 const OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
-const TEI_ENDPOINT = "http://127.0.0.1:8081";
+const TEI_ENDPOINT = "http://127.0.0.1:8282";
 
 interface LargeEntity {
   id: string;

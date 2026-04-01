@@ -26,6 +26,7 @@ import type {
   RelationshipQuery,
   RelationType,
 } from "../types/storage.js";
+import { sleep } from "../utils/runtime-detection.js";
 import { CacheOperations } from "./libsql/cache-ops.js";
 import { clearMetadataCache, decodeMetadata, encodeMetadata, getMetadataCacheStats } from "./libsql/cbor-utils.js";
 import { CooccurrenceOperations } from "./libsql/cooccurrence-ops.js";
@@ -306,7 +307,7 @@ export class GraphAdapter {
         for (let attempt = 1; attempt <= 3; attempt++) {
           const delay = attempt * 2000;
           log.i("LIBSQLADAPT", "busy_wait", { attempt, delay });
-          await new Promise((r) => setTimeout(r, delay));
+          await sleep(delay);
 
           try {
             return await this.initialize(dbPath, false);

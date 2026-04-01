@@ -14,18 +14,8 @@ import { execSync } from "node:child_process";
 import { existsSync, type FSWatcher, readFileSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { log } from "../logging/index.js";
+import { sleep } from "../utils/runtime-detection.js";
 import { areTimersSuspended } from "./indexing-state.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof globalThis.Bun !== "undefined" && typeof globalThis.Bun.sleep === "function") {
-    await globalThis.Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 /**
  * Resolve the .git directory path (handles worktrees).
@@ -406,8 +396,8 @@ export class GitWatcher {
     // Defer if heavy analysis is running (prevents bun:sqlite concurrent access crash)
     if (areTimersSuspended()) {
       log.d("GITWATCHER", "flush_deferred_suspended", { pending: this.pendingChanges.size });
-      // Re-schedule after a short delay
-      setTimeout(() => this.flushPendingChanges(), 2000);
+      // Async retry — no setTimeout handle (Bun-safe)
+      sleep(2000).then(() => this.flushPendingChanges());
       return;
     }
 

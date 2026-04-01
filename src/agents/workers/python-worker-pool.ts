@@ -14,27 +14,7 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
-
-/**
- * Bun global interface for runtime detection
- */
-interface BunGlobal {
-  Bun?: {
-    sleep?: (ms: number) => Promise<void>;
-  };
-}
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  const bunGlobal = globalThis as BunGlobal;
-  if (bunGlobal.Bun?.sleep && typeof bunGlobal.Bun.sleep === "function") {
-    await bunGlobal.Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { sleep } from "../../utils/runtime-detection.js";
 
 // =============================================================================
 // TYPES

@@ -19,7 +19,7 @@ import { getGraphStorage, setGlobalProjectContext } from "../storage/graph-stora
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, ParserOptions } from "../types/parser.js";
 import { hashText } from "../utils/fast-hash.js";
-import { tryGarbageCollect } from "../utils/runtime-detection.js";
+import { sleep, tryGarbageCollect } from "../utils/runtime-detection.js";
 import { BaseAgent } from "./base.js";
 import { createHeuristicEntities } from "./dev/heuristic-parser.js";
 import { separateFilesBySupport } from "./dev/incremental-indexer.js";
@@ -588,9 +588,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         try {
           await Promise.race([
             embeddingGenerator.initialize(),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`TEI init timeout after ${initTimeoutMs}ms`)), initTimeoutMs),
-            ),
+            sleep(initTimeoutMs).then(() => {
+              throw new Error(`TEI init timeout after ${initTimeoutMs}ms`);
+            }),
           ]);
         } catch (initErr) {
           log.w(

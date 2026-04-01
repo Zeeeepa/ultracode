@@ -21,6 +21,7 @@ import {
   type IPCResponse,
   MessageDecoder,
 } from "../shared/ipc-protocol.js";
+import { sleep } from "../utils/runtime-detection.js";
 
 // ============================================================================
 // Types
@@ -252,7 +253,7 @@ export class RoslynAddonClient {
     });
 
     // Wait a moment for pipe server to initialize
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await sleep(1000);
   }
 
   private async connectPipe(): Promise<void> {

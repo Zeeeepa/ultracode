@@ -138,26 +138,19 @@ export class WorkerEmbeddingClient {
     const url = `${this.baseUrl}/embed`;
     const timeout = this.config.providerOptions?.timeoutMs || 30000;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inputs: texts }),
+      signal: AbortSignal.timeout(timeout),
+    });
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputs: texts }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`TEI error: ${response.status} ${response.statusText}`);
-      }
-
-      const embeddings = (await response.json()) as number[][];
-      return embeddings.map((emb) => new Float32Array(emb));
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`TEI error: ${response.status} ${response.statusText}`);
     }
+
+    const embeddings = (await response.json()) as number[][];
+    return embeddings.map((emb) => new Float32Array(emb));
   }
 
   /**
@@ -190,45 +183,39 @@ export class WorkerEmbeddingClient {
         });
       }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: currentEndpoint, // Use round-robin endpoint (embeddings-gpu/embeddings-cpu)
+          input: texts,
+          encoding_format: this.config.providerOptions?.encodingFormat || "float",
+        }),
+        signal: AbortSignal.timeout(timeout),
+      });
 
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: currentEndpoint, // Use round-robin endpoint (embeddings-gpu/embeddings-cpu)
-            input: texts,
-            encoding_format: this.config.providerOptions?.encodingFormat || "float",
-          }),
+      if (!response.ok) {
+        throw new Error(`OVMS error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = (await response.json()) as EmbeddingApiResponse;
+
+      // Handle base64 or float encoding
+      if (this.config.providerOptions?.encodingFormat === "base64") {
+        return result.data.map((item) => {
+          if (typeof item.embedding !== "string") {
+            throw new Error("Expected base64 string encoding");
+          }
+          const binaryData = Buffer.from(item.embedding, "base64");
+          return new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
         });
-
-        if (!response.ok) {
-          throw new Error(`OVMS error: ${response.status} ${response.statusText}`);
-        }
-
-        const result = (await response.json()) as EmbeddingApiResponse;
-
-        // Handle base64 or float encoding
-        if (this.config.providerOptions?.encodingFormat === "base64") {
-          return result.data.map((item) => {
-            if (typeof item.embedding !== "string") {
-              throw new Error("Expected base64 string encoding");
-            }
-            const binaryData = Buffer.from(item.embedding, "base64");
-            return new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
-          });
-        } else {
-          return result.data.map((item) => {
-            if (typeof item.embedding === "string") {
-              throw new Error("Expected float array encoding");
-            }
-            return new Float32Array(item.embedding);
-          });
-        }
-      } finally {
-        clearTimeout(timeoutId);
+      } else {
+        return result.data.map((item) => {
+          if (typeof item.embedding === "string") {
+            throw new Error("Expected float array encoding");
+          }
+          return new Float32Array(item.embedding);
+        });
       }
     } else {
       // Raw OVMS inference endpoint
@@ -247,29 +234,22 @@ export class WorkerEmbeddingClient {
 
     // Ollama processes one text at a time
     for (const text of texts) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.config.modelName,
+          prompt: text,
+        }),
+        signal: AbortSignal.timeout(timeout),
+      });
 
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: this.config.modelName,
-            prompt: text,
-          }),
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
-        }
-
-        const result = (await response.json()) as OllamaEmbeddingResponse;
-        results.push(new Float32Array(result.embedding));
-      } finally {
-        clearTimeout(timeoutId);
+      if (!response.ok) {
+        throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
       }
+
+      const result = (await response.json()) as OllamaEmbeddingResponse;
+      results.push(new Float32Array(result.embedding));
     }
 
     return results;
@@ -288,37 +268,30 @@ export class WorkerEmbeddingClient {
       throw new Error("OpenAI API key not configured");
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.config.modelName,
+        input: texts,
+      }),
+      signal: AbortSignal.timeout(timeout),
+    });
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.config.modelName,
-          input: texts,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`OpenAI error: ${response.status} ${response.statusText}`);
-      }
-
-      const result = (await response.json()) as EmbeddingApiResponse;
-      return result.data.map((item) => {
-        if (typeof item.embedding === "string") {
-          throw new Error("Expected float array encoding from OpenAI");
-        }
-        return new Float32Array(item.embedding);
-      });
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`OpenAI error: ${response.status} ${response.statusText}`);
     }
+
+    const result = (await response.json()) as EmbeddingApiResponse;
+    return result.data.map((item) => {
+      if (typeof item.embedding === "string") {
+        throw new Error("Expected float array encoding from OpenAI");
+      }
+      return new Float32Array(item.embedding);
+    });
   }
 
   /**
@@ -329,43 +302,36 @@ export class WorkerEmbeddingClient {
     const timeout = this.config.providerOptions?.timeoutMs || 30000;
     const encodingFormat = this.config.providerOptions?.encodingFormat || "float";
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.config.modelName,
+        input: texts,
+        encoding_format: encodingFormat,
+      }),
+      signal: AbortSignal.timeout(timeout),
+    });
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: this.config.modelName,
-          input: texts,
-          encoding_format: encodingFormat,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`vLLM error: ${response.status} ${response.statusText} - ${body.slice(0, 500)}`);
-      }
-
-      const result = (await response.json()) as {
-        data: Array<{ embedding: number[] | string; index: number }>;
-      };
-
-      // Sort by index to ensure correct order
-      const sorted = [...result.data].sort((a, b) => a.index - b.index);
-      return sorted.map((item) => {
-        if (typeof item.embedding === "string") {
-          // base64-encoded Float32 array (vLLM 0.14+)
-          const binaryData = Buffer.from(item.embedding, "base64");
-          return new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
-        }
-        return new Float32Array(item.embedding);
-      });
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`vLLM error: ${response.status} ${response.statusText} - ${body.slice(0, 500)}`);
     }
+
+    const result = (await response.json()) as {
+      data: Array<{ embedding: number[] | string; index: number }>;
+    };
+
+    // Sort by index to ensure correct order
+    const sorted = [...result.data].sort((a, b) => a.index - b.index);
+    return sorted.map((item) => {
+      if (typeof item.embedding === "string") {
+        // base64-encoded Float32 array (vLLM 0.14+)
+        const binaryData = Buffer.from(item.embedding, "base64");
+        return new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
+      }
+      return new Float32Array(item.embedding);
+    });
   }
 
   /**
@@ -375,34 +341,27 @@ export class WorkerEmbeddingClient {
     const url = `${this.baseUrl}/v1/embeddings`;
     const timeout = this.config.providerOptions?.timeoutMs || 30000;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.config.modelName,
+        input: texts,
+      }),
+      signal: AbortSignal.timeout(timeout),
+    });
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: this.config.modelName,
-          input: texts,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`llama.cpp error: ${response.status} ${response.statusText} - ${body.slice(0, 500)}`);
-      }
-
-      const result = (await response.json()) as {
-        data: Array<{ embedding: number[]; index: number }>;
-      };
-
-      // Sort by index to ensure correct order
-      const sorted = [...result.data].sort((a, b) => a.index - b.index);
-      return sorted.map((item) => new Float32Array(item.embedding));
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`llama.cpp error: ${response.status} ${response.statusText} - ${body.slice(0, 500)}`);
     }
+
+    const result = (await response.json()) as {
+      data: Array<{ embedding: number[]; index: number }>;
+    };
+
+    // Sort by index to ensure correct order
+    const sorted = [...result.data].sort((a, b) => a.index - b.index);
+    return sorted.map((item) => new Float32Array(item.embedding));
   }
 }

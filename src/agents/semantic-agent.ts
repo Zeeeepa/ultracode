@@ -229,9 +229,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       const timeoutMs = 5000;
       const testEmbedding = await Promise.race([
         this.embeddingGen.generateEmbedding("dimension detection test"),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`dim detection timeout after ${timeoutMs}ms`)), timeoutMs),
-        ),
+        sleep(timeoutMs).then(() => {
+          throw new Error(`dim detection timeout after ${timeoutMs}ms`);
+        }),
       ]);
       const dimensions = testEmbedding.length;
       this.embeddingDim = dimensions;
@@ -519,7 +519,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       case "tei": {
         const teiConfig = semanticConfig?.embedding?.tei || config.mcp?.embedding?.tei;
         providerOptions = {
-          baseUrl: teiConfig?.endpoint || teiConfig?.baseUrl || "http://127.0.0.1:8081",
+          baseUrl: teiConfig?.endpoint || teiConfig?.baseUrl || "http://127.0.0.1:8282",
           timeoutMs: teiConfig?.timeoutMs,
           concurrency: teiConfig?.concurrency,
           maxBatchSize: teiConfig?.max_batch_tokens,

@@ -22,7 +22,7 @@ mcp:
 
     # TEI - Alternative GPU provider
     tei:
-      baseUrl: "http://127.0.0.1:8081"
+      baseUrl: "http://127.0.0.1:8282"
       timeoutMs: 120000        # 2 min for massive batches
       concurrency: 16          # High parallelism
       checkServer: false

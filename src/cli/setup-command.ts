@@ -218,7 +218,7 @@ function buildEmbeddingConfig(
                 | { max_batch_tokens?: number; max_client_batch_size?: number; concurrency?: number }
                 | undefined;
               return {
-                endpoint: "http://127.0.0.1:8081",
+                endpoint: "http://127.0.0.1:8282",
                 max_batch_tokens: teiCfg?.max_batch_tokens ?? 16384,
                 max_client_batch_size: teiCfg?.max_client_batch_size ?? 500,
                 concurrency: teiCfg?.concurrency,

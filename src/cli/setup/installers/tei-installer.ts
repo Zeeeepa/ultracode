@@ -43,6 +43,12 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
   }
 
   // Select image based on GPU (Blackwell needs separate image with sm_120 support)
+  console.error(
+    `[DEBUG] GPU: available=${gpu.available}, isBlackwell=${gpu.isBlackwell}, computeCap=${gpu.computeCap}, arch=${gpu.architecture}`,
+  );
+  console.error(
+    `[DEBUG] Model images: gpu=${model.image_gpu}, blackwell=${model.image_gpu_blackwell}, cpu=${model.image_cpu}`,
+  );
   let imageTag: string;
   if (gpu.available && gpu.isBlackwell && model.image_gpu_blackwell) {
     imageTag = model.image_gpu_blackwell;
@@ -52,9 +58,10 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
   } else {
     imageTag = model.image_cpu || "ghcr.io/huggingface/text-embeddings-inference:cpu-latest";
   }
+  console.error(`[DEBUG] Selected image: ${imageTag}`);
 
   const containerName = "tei-server";
-  const port = 8081;
+  const port = 8282;
 
   // Check existing container
   try {
@@ -206,6 +213,6 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
 
   console.error("");
   printWarn(ti("install.health_timeout", { container: containerName }));
-  printInfo(t("vllm.health_timeout_hint").replace("8000", "8081"));
+  printInfo(t("vllm.health_timeout_hint").replace("8000", "8282"));
   return true;
 }

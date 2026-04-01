@@ -71,7 +71,7 @@
       "description": "HuggingFace Text Embeddings Inference\n🚀 1,169 emb/s (E5-small, Accumulator, RTX 5090)\n⚡ Peak 2,442 emb/s\n📄 До 8K контекст (BGE-M3)\n🐳 Требует Docker\n✅ RTX 50xx: image 120-latest (TEI 1.9.2+)",
       "requires": ["docker"],
       "optional": ["nvidia-gpu"],
-      "default_port": 8081,
+      "default_port": 8282,
       "container_name": "tei-server",
       "supports_batch": true,
       "capabilities": {

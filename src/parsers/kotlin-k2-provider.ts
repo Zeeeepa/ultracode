@@ -24,6 +24,7 @@ import { workerLog } from "../agents/workers/worker-logging.js";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getDataDir } from "../utils/config-paths.js";
+import { sleep } from "../utils/runtime-detection.js";
 
 // =============================================================================
 // CONSTANTS
@@ -451,7 +452,7 @@ export class KotlinK2Provider {
         return;
       }
       // Wait and retry
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      await sleep(pollInterval);
     }
 
     workerLog("WARN", "KOTLINK2 wait_timeout", { elapsed: Date.now() - startTime });

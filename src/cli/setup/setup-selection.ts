@@ -280,7 +280,7 @@ export async function selectProvider(cpu: CPUInfo, gpu: GPUInfo): Promise<string
  * The `provider` field is set later based on the selected provider.
  */
 export function zigModelToEmbeddingModel(zigModel: ZigEmbeddingModel, provider: string): EmbeddingModel {
-  return {
+  const base: EmbeddingModel = {
     id: zigModel.id,
     provider,
     name: zigModel.name,
@@ -295,6 +295,15 @@ export function zigModelToEmbeddingModel(zigModel: ZigEmbeddingModel, provider: 
     description: getSetupLanguage() === "ru" ? zigModel.note_ru : zigModel.note_en,
     hf_model: zigModel.hf_repo,
   };
+
+  // TEI Docker images — same for all TEI models, Blackwell needs sm_120 build
+  if (provider === "tei") {
+    base.image_gpu = "ghcr.io/huggingface/text-embeddings-inference:latest";
+    base.image_gpu_blackwell = "ghcr.io/huggingface/text-embeddings-inference:120-latest";
+    base.image_cpu = "ghcr.io/huggingface/text-embeddings-inference:cpu-latest";
+  }
+
+  return base;
 }
 
 /**

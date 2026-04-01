@@ -14,22 +14,8 @@ import * as pathModule from "node:path";
 // TYPE DEFINITIONS
 // =============================================================================
 
-/**
- * Bun runtime interface (defined in runtime-detection.ts)
- */
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof globalThis.Bun?.sleep === "function") {
-    await globalThis.Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
-
 import type { CPUInfo } from "../../cpu/cpu-detector.js";
+import { sleep } from "../../utils/runtime-detection.js";
 import { t, ta, ti } from "./i18n/index.js";
 import { checkDocker, checkOllama } from "./setup-installers.js";
 import type { GPUInfo, LLMConfig, ProviderOption, SelectedLLMModel } from "./setup-types.js";
@@ -694,7 +680,7 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
 
   const imageTag = "ghcr.io/huggingface/text-generation-inference:3.3.4";
   const containerName = "tgi-llm-server";
-  const port = 8081;
+  const port = 8282;
 
   // Check existing container
   try {

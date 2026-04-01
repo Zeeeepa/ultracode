@@ -193,7 +193,7 @@ export function buildWorkerProviderOptions(
         | TeiConfigExtended
         | undefined;
       return {
-        baseUrl: teiConfig?.endpoint || teiConfig?.baseUrl || "http://127.0.0.1:8081",
+        baseUrl: teiConfig?.endpoint || teiConfig?.baseUrl || "http://127.0.0.1:8282",
         timeoutMs: teiConfig?.timeoutMs,
         concurrency: teiConfig?.concurrency,
         maxBatchSize: teiConfig?.max_batch_tokens,
@@ -261,7 +261,7 @@ export function buildEmbeddingGeneratorOptions(
   const jsonTei = semanticConfig?.embedding?.tei as TeiConfigExtended | undefined;
   if (provider === "tei") {
     options.tei = {
-      baseUrl: jsonTei?.endpoint || yamlTei?.baseUrl || "http://127.0.0.1:8081",
+      baseUrl: jsonTei?.endpoint || yamlTei?.baseUrl || "http://127.0.0.1:8282",
       timeoutMs: yamlTei?.timeoutMs,
       concurrency: yamlTei?.concurrency,
       checkServer: yamlTei?.checkServer,

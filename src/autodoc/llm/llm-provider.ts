@@ -194,7 +194,7 @@ export class TGIProvider implements LLMProvider {
   private baseUrl: string;
 
   constructor(config: { baseUrl?: string | undefined }) {
-    this.baseUrl = config.baseUrl || "http://localhost:8081";
+    this.baseUrl = config.baseUrl || "http://localhost:8282";
   }
 
   get isAvailable(): boolean {

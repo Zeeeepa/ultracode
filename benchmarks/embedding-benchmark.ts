@@ -20,7 +20,7 @@ import { chunkCode, getChunkSettings, estimateTokens, needsChunking } from "../s
 // ============================================================================
 
 const OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
-const TEI_ENDPOINT = "http://127.0.0.1:8081";
+const TEI_ENDPOINT = "http://127.0.0.1:8282";
 const OVMS_NATIVE_ENDPOINT = "http://127.0.0.1:8083"; // OVMS Native
 const OVMS_DOCKER_ENDPOINT = "http://127.0.0.1:8082"; // OVMS Docker (fallback)
 const PROJECT_ROOT = join(import.meta.dir, "..");

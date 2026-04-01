@@ -1262,7 +1262,7 @@ function scheduleDeferredAutoIndex(dir: string, extensions: string[]): void {
     const delay = INTERVALS[attempt]!;
     attempt++;
 
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await sleep(delay);
 
     try {
       const detection = await detectSupportedProject(dir, extensions);

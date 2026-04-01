@@ -9,6 +9,7 @@
  */
 
 import { log } from "../../logging/index.js";
+import { sleep } from "../../utils/runtime-detection.js";
 import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
 
 // =============================================================================
@@ -342,7 +343,7 @@ export class CooccurrenceOperations {
 
         // Yield to event loop every batch to prevent CPU blocking
         if (i + BATCH_SIZE < coocResult.rows.length) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          await sleep(0);
         }
       }
 

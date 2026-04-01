@@ -237,7 +237,7 @@ function resolveProviderConfig(embeddingConfig: CombinedEmbeddingConfig): {
       modelName,
       batchSize,
       providerOptions: {
-        baseUrl: teiConfig.endpoint || teiConfig.baseUrl || "http://127.0.0.1:8081",
+        baseUrl: teiConfig.endpoint || teiConfig.baseUrl || "http://127.0.0.1:8282",
         timeoutMs: teiConfig.timeoutMs,
         concurrency: teiConfig.concurrency, // default 16 in provider, can override here
         maxBatchSize: teiConfig.max_client_batch_size, // TEI max_client_batch_size (not max_batch_tokens)

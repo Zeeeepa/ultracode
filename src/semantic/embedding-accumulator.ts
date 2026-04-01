@@ -474,7 +474,7 @@ export class EmbeddingAccumulator {
             log.e("ACCUMULATOR", "Batch failed", { error: msg, count: batch.length, is429 });
             // Re-queue failed batch with backoff for 429
             if (is429) {
-              await new Promise((r) => setTimeout(r, 500));
+              await sleep(500);
             }
             this.textQueue.unshift(...batch);
             return null;

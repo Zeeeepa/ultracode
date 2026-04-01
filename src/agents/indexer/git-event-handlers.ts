@@ -188,13 +188,6 @@ export interface EmbeddingSchedulerContext {
 }
 
 /**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-export async function runtimeSleep(ms: number): Promise<void> {
-  await sleep(ms);
-}
-
-/**
  * Schedule debounced embedding generation
  * Waits for debounce period after last change before triggering generation
  */
@@ -216,7 +209,7 @@ export function scheduleEmbeddingGeneration(ctx: EmbeddingSchedulerContext, onTr
     try {
       const startTime = Date.now();
       while (!signal.aborted && Date.now() - startTime < ctx.debouncePeriodMs) {
-        await runtimeSleep(1000); // Check every second
+        await sleep(1000); // Check every second
       }
       if (!signal.aborted) {
         await onTrigger();
@@ -251,6 +244,6 @@ export async function triggerEmbeddingGeneration(ctx: EmbeddingSchedulerContext)
   );
 
   // Reset flag after a delay using runtime-aware sleep
-  await runtimeSleep(5000);
+  await sleep(5000);
   ctx.setPendingGeneration(false);
 }

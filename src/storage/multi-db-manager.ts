@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { log } from "../logging/index.js";
+import { sleep } from "../utils/runtime-detection.js";
 import { DbWriteMutex } from "./db-write-mutex.js";
 import { NativeSQLiteClient } from "./native-sqlite-client.js";
 
@@ -223,7 +224,7 @@ export class MultiDbManager {
     this.mutexes.cache.drain();
 
     // 2. Brief yield to let unblocked writers error out
-    await new Promise((r) => setTimeout(r, 50));
+    await sleep(50);
 
     // 3. Clear tables directly on the existing connection (bypasses writeMutex)
     const graph = this.clients.graph;

@@ -403,7 +403,8 @@ export class FileWatcher extends EventEmitter {
     // Defer if heavy analysis is running
     if (areTimersSuspended()) {
       log.d("FILEWATCHER", "deferred_suspended", { pending: this.pendingChanges.size });
-      setTimeout(() => this.flush(), 2000);
+      // Async retry — no setTimeout handle (Bun-safe)
+      sleep(2000).then(() => this.flush());
       return;
     }
 
