@@ -10,6 +10,23 @@ export ULTRACODE_BUILD=1
 # Ensure common tool paths are available (macOS: bun, cargo, etc.)
 [ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+[ -d "/opt/homebrew/bin" ] && export PATH="/opt/homebrew/bin:$PATH"
+
+# Node.js is required (native addon builds, subprocess runtime)
+if ! command -v node &> /dev/null; then
+    echo "[INFO] Node.js not found, installing..."
+    if [[ "$OSTYPE" == "darwin"* ]] && command -v brew &> /dev/null; then
+        brew install node
+    elif [[ "$OSTYPE" == "linux-gnu"* ]] && command -v apt-get &> /dev/null; then
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+    fi
+    command -v node &> /dev/null && echo "[OK] Node.js $(node --version) installed" || {
+        echo "[ERROR] Node.js required but could not be installed"
+        echo "        Install: https://nodejs.org/"
+        exit 1
+    }
+fi
 
 
 # Move cosmocc out of priority PATH so system make/gcc are found first by node-gyp.
