@@ -190,12 +190,13 @@ function detectAgents(): AgentStatus[] {
     if (existsSync(agent.configFile)) {
       try {
         const content = stripBom(readFileSync(agent.configFile, "utf-8"));
+        const entryName = getEntryName(agent);
 
         if (agent.style === "toml") {
-          alreadyConfigured = content.includes(`[mcp_servers.${ENTRY_NAME}]`);
+          alreadyConfigured = content.includes(`[mcp_servers.${entryName}]`);
         } else {
           // Quick string check — works for JSONC with comments too
-          alreadyConfigured = content.includes(`"${ENTRY_NAME}"`);
+          alreadyConfigured = content.includes(`"${entryName}"`);
         }
       } catch {
         // Can't read — treat as not configured
@@ -243,6 +244,7 @@ function ensureParentDir(filePath: string): void {
 }
 
 function installJson(agent: AgentDef, command: string): "added" | "already_exists" | "error" {
+  const entryName = getEntryName(agent);
   let config: Record<string, unknown> = {};
 
   if (existsSync(agent.configFile)) {
@@ -253,7 +255,7 @@ function installJson(agent: AgentDef, command: string): "added" | "already_exist
       // Parse failed — check string fallback (JSONC with comments)
       try {
         const raw = readFileSync(agent.configFile, "utf-8");
-        if (raw.includes(`"${ENTRY_NAME}"`)) return "already_exists";
+        if (raw.includes(`"${entryName}"`)) return "already_exists";
       } catch {}
       // Start fresh
       config = {};
@@ -267,10 +269,10 @@ function installJson(agent: AgentDef, command: string): "added" | "already_exist
   }
 
   const servers = config[key] as Record<string, unknown>;
-  if (servers[ENTRY_NAME]) return "already_exists";
+  if (servers[entryName]) return "already_exists";
 
   // Add entry
-  servers[ENTRY_NAME] = buildJsonEntry(agent.style, command);
+  servers[entryName] = buildJsonEntry(agent.style, command);
 
   ensureParentDir(agent.configFile);
   writeFileSync(agent.configFile, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
@@ -278,11 +280,12 @@ function installJson(agent: AgentDef, command: string): "added" | "already_exist
 }
 
 function installToml(agent: AgentDef, command: string): "added" | "already_exists" | "error" {
+  const entryName = getEntryName(agent);
   let content = "";
 
   if (existsSync(agent.configFile)) {
     content = readFileSync(agent.configFile, "utf-8");
-    if (content.includes(`[mcp_servers.${ENTRY_NAME}]`)) return "already_exists";
+    if (content.includes(`[mcp_servers.${entryName}]`)) return "already_exists";
   }
 
   // Append TOML section
@@ -291,7 +294,7 @@ function installToml(agent: AgentDef, command: string): "added" | "already_exist
   if (toml.length > 0) toml += "\n";
 
   const escaped = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  toml += `[mcp_servers.${ENTRY_NAME}]\n`;
+  toml += `[mcp_servers.${entryName}]\n`;
   toml += `command = "${escaped}"\n`;
   toml += `args = ["--stdio"]\n`;
 
@@ -361,14 +364,51 @@ export async function installMcpConfigs(): Promise<void> {
 }
 
 /**
+ * Get the native comm proxy binary name for the current platform.
+ * Falls back to cosmopolitan ultracode.com if native binary not found.
+ */
+function getNativeBinaryName(): string {
+  const plat = platform();
+  const { arch } = require("node:os");
+  const a = arch();
+
+  if (plat === "win32") return "ultracode-win32-x64.exe";
+  if (plat === "darwin" && a === "arm64") return "ultracode-darwin-arm64";
+  if (plat === "darwin") return "ultracode-darwin-x64";
+  if (plat === "linux" && a === "arm64") return "ultracode-linux-arm64";
+  return "ultracode-linux-x64";
+}
+
+/**
  * Determine the MCP command for a given agent.
- * - macOS/Linux: "ultracode.com" (lightweight proxy, connects to running server via named pipe)
- * - Windows: "ultracode.cmd" — .com extension is legacy DOS executable format;
- *   many process spawners (Claude Code, Cursor, Node child_process) mishandle it
- *   on Windows. The .cmd shim created by npm/bun is universally reliable.
+ *
+ * Priority:
+ *   1. Native platform binary (ultracode-{os}-{arch}) — no Cosmopolitan dependency
+ *   2. Cosmopolitan binary (ultracode.com / ultracode.cmd) — fallback
+ *
+ * For Claude Code specifically, the entry is registered as "ultracode.ts"
+ * (since "ultracode" is already taken by the zig version).
  */
 function getCommandForAgent(_agent: AgentDef): string {
+  // Try native binary first
+  const nativeName = getNativeBinaryName();
+  const nativePath = join(__dirname, "..", "..", nativeName);
+  if (existsSync(nativePath)) return nativePath;
+
+  // Check in dist/ (development)
+  const distPath = join(__dirname, "..", "..", "..", "dist", nativeName);
+  if (existsSync(distPath)) return distPath;
+
+  // Fallback to cosmopolitan binary
   return platform() === "win32" ? "ultracode.cmd" : "ultracode.com";
+}
+
+/**
+ * Get the MCP entry name for a given agent.
+ * Claude Code uses "ultracode.ts" to avoid conflict with zig version.
+ */
+function getEntryName(agent: AgentDef): string {
+  return agent.name === "Claude Code" ? "ultracode.ts" : ENTRY_NAME;
 }
 
 function performInstall(targets: AgentStatus[]): void {

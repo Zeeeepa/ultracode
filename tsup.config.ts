@@ -107,6 +107,27 @@ export default defineConfig([
         // Binary not built yet - that's fine, it's optional
       }
 
+      // Copy native platform-specific comm binaries
+      const nativeBinaries = [
+        "ultracode-darwin-arm64",
+        "ultracode-darwin-x64",
+        "ultracode-linux-x64",
+        "ultracode-linux-arm64",
+        "ultracode-win32-x64.exe",
+      ];
+      for (const bin of nativeBinaries) {
+        const src = join("dist", bin);
+        try {
+          await access(src);
+          if (process.platform !== "win32" && !bin.endsWith(".exe")) {
+            await chmod(src, 0o755);
+          }
+          console.log(`[tsup] Native binary ready: ${bin}`);
+        } catch {
+          // Not built on this platform — expected
+        }
+      }
+
       // Copy native parser CLI scripts (Python, Go)
       const parsersDir = join("dist", "parsers");
       try {
