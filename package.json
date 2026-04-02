@@ -46,6 +46,7 @@
     "dist/ultracode-linux-arm64",
     "dist/ultracode-win32-x64.exe",
     "external-libs/**/*.node",
+    "external-libs/**/*.dylib",
     "external-libs/**/*.dll",
     "external-libs/**/*.so*",
     "external-libs/**/*.metallib",

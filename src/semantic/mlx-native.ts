@@ -38,15 +38,16 @@ let state: MlxNativeState | null = null;
  * Find libmlx_embed.dylib in known locations
  */
 function findDylib(): string | null {
+  const baseDir = dirname(import.meta.url.replace("file://", ""));
   const dataDir = getDataDir();
   const candidates = [
-    join(dataDir, "mlx", "libmlx_embed.dylib"),
-    join(dataDir, "lib", "libmlx_embed.dylib"),
-    // Adjacent to dist/
-    join(dirname(import.meta.url.replace("file://", "")), "..", "..", "external-libs", "mlx", "libmlx_embed.dylib"),
+    // Bundled in npm package (external-libs/mlx/)
+    join(baseDir, "..", "..", "external-libs", "mlx", "libmlx_embed.dylib"),
+    // Downloaded by setup
+    join(dataDir, "mlx", "lib", "libmlx_embed.dylib"),
     // From ultracode.zig (dev)
-    join(dirname(import.meta.url.replace("file://", "")), "..", "..", "..", "ultracode.zig", "vendor", "mlx", "libmlx_embed.dylib"),
-    // Homebrew / system
+    join(baseDir, "..", "..", "..", "ultracode.zig", "vendor", "mlx", "libmlx_embed.dylib"),
+    // System
     "/usr/local/lib/libmlx_embed.dylib",
     "/opt/homebrew/lib/libmlx_embed.dylib",
   ];
@@ -61,13 +62,17 @@ function findDylib(): string | null {
  * Find libmlx.dylib (MLX framework dependency)
  */
 function findMlxFramework(): string | null {
+  const baseDir = dirname(import.meta.url.replace("file://", ""));
   const dataDir = getDataDir();
   const candidates = [
-    join(dataDir, "mlx", "libmlx.dylib"),
-    join(dataDir, "lib", "libmlx.dylib"),
-    join(dirname(import.meta.url.replace("file://", "")), "..", "..", "external-libs", "mlx", "libmlx.dylib"),
-    join(dirname(import.meta.url.replace("file://", "")), "..", "..", "..", "ultracode.zig", "vendor", "mlx", "libmlx.dylib"),
-    join(dirname(import.meta.url.replace("file://", "")), "..", "..", "..", "ultracode.zig", "dist", "libmlx.dylib"),
+    // Bundled in npm package
+    join(baseDir, "..", "..", "external-libs", "mlx", "libmlx.dylib"),
+    // Downloaded by setup
+    join(dataDir, "mlx", "lib", "libmlx.dylib"),
+    // From ultracode.zig (dev)
+    join(baseDir, "..", "..", "..", "ultracode.zig", "vendor", "mlx", "libmlx.dylib"),
+    join(baseDir, "..", "..", "..", "ultracode.zig", "dist", "libmlx.dylib"),
+    // System
     "/usr/local/lib/libmlx.dylib",
     "/opt/homebrew/lib/libmlx.dylib",
   ];

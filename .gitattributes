@@ -32,3 +32,4 @@ external-libs/**/*.dll filter=lfs diff=lfs merge=lfs -text
 external-libs/**/*.so* filter=lfs diff=lfs merge=lfs -text
 external-libs/**/*.node filter=lfs diff=lfs merge=lfs -text
 external-libs/**/*.metallib filter=lfs diff=lfs merge=lfs -text
+external-libs/**/*.dylib filter=lfs diff=lfs merge=lfs -text

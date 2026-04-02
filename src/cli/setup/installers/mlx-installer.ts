@@ -45,6 +45,13 @@ async function downloadFile(url: string, dest: string): Promise<boolean> {
 }
 
 async function downloadDylibs(mlxDir: string): Promise<boolean> {
+  // Check if bundled in npm package first
+  const bundledDir = join(__dirname, "..", "..", "..", "..", "external-libs", "mlx");
+  if (existsSync(join(bundledDir, "libmlx_embed.dylib")) && existsSync(join(bundledDir, "libmlx.dylib"))) {
+    printOK("MLX dylibs в составе пакета");
+    return true;
+  }
+
   const libDir = join(mlxDir, "lib");
   mkdirSync(libDir, { recursive: true });
 
