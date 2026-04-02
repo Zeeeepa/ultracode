@@ -4,10 +4,14 @@
 
 import { createInterface } from "node:readline";
 
-// Clear screen
+// Clear screen (safe: falls back to stderr if stdout unavailable, e.g. MCP proxy)
 export function clearScreen(): void {
-  // Clear screen and move cursor to top-left
-  process.stdout.write("\x1b[2J\x1b[H");
+  try {
+    const stream = process.stdout?.writable ? process.stdout : process.stderr;
+    stream.write("\x1b[2J\x1b[H");
+  } catch {
+    // No TTY available (MCP proxy, CI, pipe) — just skip
+  }
 }
 
 // Colors (avoiding bold \x1b[1m which shows as red on some Windows terminals)
@@ -58,7 +62,8 @@ export function printError(msg: string): void {
 }
 
 export async function prompt(question: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const output = process.stdout?.writable ? process.stdout : process.stderr;
+  const rl = createInterface({ input: process.stdin, output });
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
