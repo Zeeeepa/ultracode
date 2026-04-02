@@ -520,6 +520,9 @@ export async function runSetup(args: string[]): Promise<void> {
 
   console.error(`${c.yellow}Next: Restart your MCP client to enable semantic mode${c.reset}`);
   console.error("");
+
+  // Force exit — Bun may keep event loop alive due to open fd handles
+  process.exit(0);
 }
 
 // Run if executed directly
