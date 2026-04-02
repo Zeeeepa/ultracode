@@ -1,313 +1,223 @@
 /**
- * MLX Embedding Provider
+ * MLX Native Embedding Provider
  *
- * Connects to the local MLX embedding server for embedding generation.
- * Uses Apple MLX framework via Metal GPU on macOS ARM64.
+ * Direct Metal GPU inference via libmlx_embed.dylib (Bun FFI).
+ * No Python, no HTTP — same engine as ultracode.zig.
  *
- * The server provides OpenAI-compatible /v1/embeddings API,
- * so this provider follows the same pattern as llama.cpp/vLLM providers.
+ * Tokenization via @lenml/tokenizers (same as OVMS provider).
  */
 
-import { toError } from "../../utils/error-handling.js";
-import { stringify } from "../../utils/fast-json.js";
-import { sleep } from "../../utils/runtime.js";
-import { MLX_EMBEDDING_PORT, mlxEmbeddingManager } from "../mlx-server-manager.js";
+import * as mlxNative from "../mlx-native.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
 
 export interface MlxProviderOptions {
   model: string;
-  baseUrl?: string | undefined;
-  timeoutMs?: number | undefined;
-  concurrency?: number | undefined;
-  checkServer?: boolean | undefined;
-  logger?: ProviderLogger | undefined;
+  modelDir: string;
   maxBatchSize?: number | undefined;
-  /** Auto-start MLX server if not running (default: true) */
-  autoStart?: boolean | undefined;
+  maxSeqLen?: number | undefined;
+  logger?: ProviderLogger | undefined;
 }
 
-/**
- * MLX Provider
- *
- * Connects to a local MLX embedding server for embedding generation.
- * MLX provides native Metal GPU inference on Apple Silicon.
- *
- * Setup (automatic via mlx-server-manager):
- *   python external-tools/mlx-embedding-server/server.py \
- *     --model intfloat/multilingual-e5-base --port 8087
- */
+// Tokenizer interface (subset of @lenml/tokenizers PreTrainedTokenizer)
+interface LenmlTokenizer {
+  (texts: string | string[], opts: {
+    padding: boolean;
+    truncation: boolean;
+    max_length: number;
+    return_tensor: false;
+  }): {
+    input_ids: number[][];
+    attention_mask: number[][];
+    token_type_ids?: number[][] | undefined;
+  };
+}
+
+// Cache for tokenizer JSON to avoid re-fetching
+const tokenizerJsonCache = new Map<string, { json: object; config: object }>();
+
 export class MlxProvider implements EmbeddingProvider {
   public info: ProviderInfo;
-  private baseUrl: string;
-  private timeoutMs: number;
-  private concurrency: number;
-  private checkServer: boolean;
-  private log?: ProviderLogger | undefined;
+  private modelDir: string;
   private maxBatchSize: number;
-  private autoStart: boolean;
+  private maxSeqLen: number;
+  private log?: ProviderLogger | undefined;
+  private tokenizer: LenmlTokenizer | null = null;
+  private initialized = false;
 
   constructor(opts: MlxProviderOptions) {
     this.log = opts.logger;
-    this.baseUrl = opts.baseUrl ?? `http://127.0.0.1:${MLX_EMBEDDING_PORT}`;
-    this.timeoutMs = opts.timeoutMs ?? 30_000;
-    this.concurrency = Math.max(1, opts.concurrency ?? 4);
-    this.checkServer = opts.checkServer !== false;
-    this.maxBatchSize = opts.maxBatchSize ?? 128;
-    this.autoStart = opts.autoStart !== false;
+    this.modelDir = opts.modelDir;
+    this.maxBatchSize = opts.maxBatchSize ?? 64;
+    this.maxSeqLen = opts.maxSeqLen ?? 512;
 
     this.info = {
       name: "mlx",
       model: opts.model,
       supportsBatch: true,
       maxBatchSize: this.maxBatchSize,
+      maxTokens: this.maxSeqLen,
     };
   }
 
   async initialize(): Promise<void> {
-    this.log?.info("initialize", {
-      model: this.info.model,
-      baseUrl: this.baseUrl,
-      timeoutMs: this.timeoutMs,
-      concurrency: this.concurrency,
-      autoStart: this.autoStart,
+    if (this.initialized) return;
+
+    // Load MLX native runtime
+    const loaded = mlxNative.loadModel({
+      modelDir: this.modelDir,
+      maxBatch: this.maxBatchSize,
+      maxSeq: this.maxSeqLen,
     });
 
-    // Auto-start MLX server if not running and autoStart is enabled
-    if (this.autoStart && !mlxEmbeddingManager.getState().isRunning) {
-      this.log?.info("auto-starting MLX server", { model: this.info.model });
-      const started = await mlxEmbeddingManager.ensureRunning({
-        model: this.info.model,
-        port: MLX_EMBEDDING_PORT,
-      });
-      if (!started) {
-        this.log?.warn("MLX server auto-start failed, will try connecting anyway");
-      }
+    if (!loaded) {
+      throw new Error(`MLX: failed to load model from ${this.modelDir}`);
     }
 
-    if (this.checkServer) {
-      await this.waitForReady();
-    }
+    const dim = mlxNative.getDimension();
+    this.info.dimension = dim;
+    this.log?.info("MLX native loaded", { model: this.info.model, dim, dir: this.modelDir });
 
-    // Warmup call to determine dimension
-    try {
-      const vec = await this.embed("warmup text");
-      this.info.dimension = vec.length;
-      this.log?.info("initialized", { dimension: this.info.dimension });
-    } catch (error: unknown) {
-      const err = toError(error);
-      this.log?.error("warmup failed", { error: err.message }, undefined, err);
-      throw new Error(
-        `MLX warmup failed: ${err.message}\n` +
-          `Make sure MLX server is running:\n` +
-          `python external-tools/mlx-embedding-server/server.py --model ${this.info.model} --port ${MLX_EMBEDDING_PORT}`,
-      );
-    }
-  }
-
-  /**
-   * Wait for MLX server to be fully ready
-   */
-  private async waitForReady(maxWaitMs = 300_000): Promise<void> {
-    const startTime = Date.now();
-    const checkInterval = 1000;
-    let lastError = "";
-
-    this.log?.info("Waiting for MLX server to be ready...");
-
-    while (Date.now() - startTime < maxWaitMs) {
-      try {
-        const healthRes = await fetch(`${this.baseUrl}/health`, {
-          method: "GET",
-          signal: AbortSignal.timeout(5000),
-        });
-
-        if (healthRes.ok) {
-          const elapsed = Math.round((Date.now() - startTime) / 1000);
-          this.log?.info("MLX server is ready", { waitedSeconds: elapsed });
-          return;
-        }
-
-        const status = healthRes.status.toString();
-        if (status !== lastError) {
-          this.log?.debug("MLX server not ready yet", {
-            status,
-            elapsed: Math.round((Date.now() - startTime) / 1000),
-          });
-          lastError = status;
-        }
-      } catch (error: unknown) {
-        const err = toError(error);
-        if (!err.message?.includes("ECONNREFUSED") && err.message !== lastError) {
-          this.log?.debug("MLX server health check error", { error: err.message });
-          lastError = err.message;
-        }
-      }
-
-      await sleep(checkInterval);
-    }
-
-    throw new Error(
-      `MLX server did not become ready within ${maxWaitMs / 1000} seconds.\n` +
-        `Please ensure the MLX server is running:\n` +
-        `python external-tools/mlx-embedding-server/server.py --model ${this.info.model} --port ${MLX_EMBEDDING_PORT}`,
-    );
+    // Load tokenizer
+    await this.loadTokenizer();
+    this.initialized = true;
   }
 
   getDimension(): number | undefined {
-    return this.info.dimension;
+    return this.info.dimension || mlxNative.getDimension() || undefined;
   }
 
-  async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
-    this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
-
-    try {
-      const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: stringify.vllmEmbedding({
-          model: this.info.model,
-          input: text,
-        }),
-        signal: opts?.signal ?? AbortSignal.timeout(this.timeoutMs),
-      });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`MLX HTTP ${res.status}: ${body}`);
-      }
-
-      const json = (await res.json()) as {
-        data: Array<{ embedding: number[]; index: number }>;
-        model: string;
-        usage?: { prompt_tokens: number; total_tokens: number };
-      };
-
-      if (!json.data?.[0]?.embedding) {
-        throw new Error("MLX invalid response format");
-      }
-
-      const arr = new Float32Array(json.data[0].embedding);
-      this.info.dimension = this.info.dimension ?? arr.length;
-      return arr;
-    } catch (error: unknown) {
-      const err = toError(error);
-      this.log?.error("embed failed", { error: err.message }, opts?.requestId, err);
-
-      if (err.message?.includes("ECONNREFUSED")) {
-        throw new Error(`MLX server not reachable at ${this.baseUrl}. Is the server running?`);
-      }
-
-      throw new Error(`MLX embed error: ${err.message}`);
-    }
+  async embed(text: string, _opts?: EmbedOptions): Promise<Float32Array> {
+    if (!this.initialized) await this.initialize();
+    const results = await this.embedBatch([text]);
+    return results[0]!;
   }
 
-  async embedBatch(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
-    this.log?.debug("embedBatch()", { count: texts.length, maxBatchSize: this.maxBatchSize }, opts?.requestId);
+  async embedBatch(texts: string[], _opts?: EmbedOptions): Promise<Float32Array[]> {
+    if (!this.initialized) await this.initialize();
+    if (!this.tokenizer) throw new Error("MLX: tokenizer not loaded");
 
-    // Split into chunks if needed
-    if (texts.length > this.maxBatchSize) {
-      const chunks: { idx: number; texts: string[] }[] = [];
-      for (let i = 0; i < texts.length; i += this.maxBatchSize) {
-        chunks.push({ idx: chunks.length, texts: texts.slice(i, i + this.maxBatchSize) });
-      }
+    const results: Float32Array[] = [];
 
-      const results: { idx: number; embeddings: Float32Array[] }[] = [];
-      let inFlight = 0;
-
-      const processChunk = async (chunk: { idx: number; texts: string[] }) => {
-        const embeddings = await this.embedBatchInternal(chunk.texts, opts);
-        return { idx: chunk.idx, embeddings };
-      };
-
-      const pending: Promise<void>[] = [];
-
-      for (const chunk of chunks) {
-        while (inFlight >= this.concurrency) {
-          await Promise.race(pending);
-        }
-
-        inFlight++;
-        const promise = processChunk(chunk).then((result) => {
-          results.push(result);
-          inFlight--;
-          pending.splice(pending.indexOf(promise), 1);
-        });
-        pending.push(promise);
-      }
-
-      await Promise.all(pending);
-
-      results.sort((a, b) => a.idx - b.idx);
-      const allEmbeddings: Float32Array[] = [];
-      for (const r of results) {
-        allEmbeddings.push(...r.embeddings);
-      }
-      return allEmbeddings;
+    // Process in batches
+    for (let i = 0; i < texts.length; i += this.maxBatchSize) {
+      const batch = texts.slice(i, i + this.maxBatchSize);
+      const batchResults = this.inferBatch(batch);
+      results.push(...batchResults);
     }
 
-    return this.embedBatchInternal(texts, opts);
+    return results;
   }
 
-  private async embedBatchInternal(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
-    try {
-      const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: stringify.vllmEmbedding({
-          model: this.info.model,
-          input: texts,
-        }),
-        signal: opts?.signal ?? AbortSignal.timeout(this.timeoutMs),
-      });
+  private inferBatch(texts: string[]): Float32Array[] {
+    if (!this.tokenizer) throw new Error("MLX: tokenizer not loaded");
 
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`MLX HTTP ${res.status}: ${body}`);
+    // Tokenize
+    const encoded = this.tokenizer(texts, {
+      padding: true,
+      truncation: true,
+      max_length: this.maxSeqLen,
+      return_tensor: false,
+    });
+
+    const batchSize = texts.length;
+    const firstRow = encoded.input_ids[0];
+    if (!firstRow) throw new Error("MLX: tokenization returned empty result");
+    const seqLen = firstRow.length;
+
+    // Flatten to Int32Array
+    const inputIds = new Int32Array(batchSize * seqLen);
+    const attentionMask = new Int32Array(batchSize * seqLen);
+
+    for (let b = 0; b < batchSize; b++) {
+      const ids = encoded.input_ids[b]!;
+      const mask = encoded.attention_mask[b]!;
+      for (let s = 0; s < seqLen; s++) {
+        inputIds[b * seqLen + s] = ids[s]!;
+        attentionMask[b * seqLen + s] = mask[s]!;
       }
-
-      const json = (await res.json()) as {
-        data: Array<{ embedding: number[]; index: number }>;
-        model: string;
-        usage?: { prompt_tokens: number; total_tokens: number };
-      };
-
-      if (!Array.isArray(json.data)) {
-        throw new Error("MLX invalid batch response format");
-      }
-
-      // Sort by index to ensure correct order
-      const sorted = [...json.data].sort((a, b) => a.index - b.index);
-
-      const embeddings = sorted.map((item) => {
-        const arr = new Float32Array(item.embedding);
-        this.info.dimension = this.info.dimension ?? arr.length;
-        return arr;
-      });
-
-      return embeddings;
-    } catch (error: unknown) {
-      const err = toError(error);
-      this.log?.error("embedBatch failed", { error: err.message }, opts?.requestId, err);
-
-      if (err.message?.includes("ECONNREFUSED")) {
-        throw new Error(`MLX server not reachable at ${this.baseUrl}. Is the server running?`);
-      }
-
-      throw new Error(`MLX embedBatch error: ${err.message}`);
     }
+
+    // Run MLX inference
+    const output = mlxNative.embed(inputIds, attentionMask, batchSize, seqLen);
+    if (!output) throw new Error("MLX: inference failed");
+
+    // Split output into per-text embeddings
+    const dim = mlxNative.getDimension() || this.info.dimension || 384;
+    const results: Float32Array[] = [];
+    for (let b = 0; b < batchSize; b++) {
+      results.push(new Float32Array(output.buffer, b * dim * 4, dim));
+    }
+
+    return results;
   }
 
   async close(): Promise<void> {
-    // MLX server is managed by mlx-server-manager
-    // No cleanup needed here
+    mlxNative.unload();
+    this.initialized = false;
   }
 
   getCapabilities(): ProviderCapabilities {
-    return {
-      embeddings: true,
-      rerank: false,
-      score: false,
-      classify: false,
+    return { embeddings: true, rerank: false, score: false, classify: false };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Tokenizer loading (same approach as OVMS provider)
+  // ═══════════════════════════════════════════════════════════════
+
+  private async loadTokenizer(): Promise<void> {
+    const modelId = this.info.model;
+
+    // Map short model IDs to HuggingFace repos
+    const hfModelMap: Record<string, string> = {
+      "multilingual-e5-small": "intfloat/multilingual-e5-small",
+      "multilingual-e5-base": "intfloat/multilingual-e5-base",
+      "snowflake-arctic-embed-xs": "Snowflake/snowflake-arctic-embed-xs",
+      "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
+      "nomic-embed-text-v1.5": "nomic-ai/nomic-embed-text-v1.5",
+      "gte-modernbert-base": "Alibaba-NLP/gte-modernbert-base",
+      "modernbert-embed-base": "nomic-ai/modernbert-embed-base",
+      "mxbai-embed-xsmall-v1": "mixedbread-ai/mxbai-embed-xsmall-v1",
+      "bge-m3": "BAAI/bge-m3",
     };
+
+    const hfRepo = hfModelMap[modelId] || modelId;
+    this.log?.info("Loading tokenizer", { model: hfRepo });
+
+    let tokenizerJson: object;
+    let tokenizerConfig: object;
+
+    const cached = tokenizerJsonCache.get(hfRepo);
+    if (cached) {
+      tokenizerJson = cached.json;
+      tokenizerConfig = cached.config;
+    } else {
+      // Download tokenizer.json and tokenizer_config.json from HuggingFace
+      const baseUrl = `https://huggingface.co/${hfRepo}/resolve/main`;
+
+      const [jsonResp, configResp] = await Promise.all([
+        fetch(`${baseUrl}/tokenizer.json`),
+        fetch(`${baseUrl}/tokenizer_config.json`),
+      ]);
+
+      if (!jsonResp.ok) throw new Error(`Failed to download tokenizer.json for ${hfRepo}: ${jsonResp.status}`);
+      if (!configResp.ok) throw new Error(`Failed to download tokenizer_config.json for ${hfRepo}: ${configResp.status}`);
+
+      tokenizerJson = await jsonResp.json() as object;
+      tokenizerConfig = await configResp.json() as object;
+      tokenizerJsonCache.set(hfRepo, { json: tokenizerJson, config: tokenizerConfig });
+    }
+
+    // Load tokenizer via @lenml/tokenizers
+    const lenml = await import("@lenml/tokenizers");
+    const TokenizerLoaderClass = lenml.TokenizerLoader;
+    if (!TokenizerLoaderClass) throw new Error("TokenizerLoader not found in @lenml/tokenizers");
+
+    const tokenizer = TokenizerLoaderClass.fromPreTrained({
+      tokenizerJSON: tokenizerJson,
+      tokenizerConfig: tokenizerConfig,
+    });
+
+    this.tokenizer = tokenizer as unknown as LenmlTokenizer;
+    this.log?.info("Tokenizer loaded", { model: hfRepo });
   }
 }

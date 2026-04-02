@@ -45,12 +45,8 @@ interface OvmsConfigExtended {
  * Extended MLX configuration with runtime fields
  */
 interface MlxConfigExtended {
-  endpoint?: string;
+  modelDir?: string;
   max_batch_size?: number;
-  timeoutMs?: number;
-  concurrency?: number;
-  auto_start?: boolean;
-  autoStart?: boolean;
   selected_model?: string | null;
 }
 
@@ -112,6 +108,7 @@ interface YamlConfig {
  */
 interface WorkerProviderOptions {
   baseUrl?: string | undefined;
+  modelDir?: string | undefined;
   timeoutMs?: number | undefined;
   concurrency?: number | undefined;
   maxBatchSize?: number | undefined;
@@ -227,10 +224,8 @@ export function buildWorkerProviderOptions(
     case "mlx": {
       const mlxConfig = semanticConfig?.embedding?.mlx as MlxConfigExtended | undefined;
       return {
-        baseUrl: mlxConfig?.endpoint || "http://127.0.0.1:8087",
-        timeoutMs: mlxConfig?.timeoutMs ?? 30000,
-        concurrency: mlxConfig?.concurrency ?? 4,
-        maxBatchSize: mlxConfig?.max_batch_size ?? 128,
+        modelDir: mlxConfig?.modelDir,
+        maxBatchSize: mlxConfig?.max_batch_size ?? 64,
       };
     }
     default:
@@ -310,15 +305,12 @@ export function buildEmbeddingGeneratorOptions(
     };
   }
 
-  // Configure MLX from semantic-config.json
+  // Configure MLX native from semantic-config.json
   if (semanticConfig?.embedding?.platform === "mlx") {
     const mlxConfig = semanticConfig?.embedding?.mlx as MlxConfigExtended | undefined;
     options.mlx = {
-      baseUrl: mlxConfig?.endpoint || "http://127.0.0.1:8087",
-      timeoutMs: mlxConfig?.timeoutMs ?? 30000,
-      concurrency: mlxConfig?.concurrency ?? 4,
-      maxBatchSize: mlxConfig?.max_batch_size ?? 128,
-      autoStart: mlxConfig?.auto_start ?? mlxConfig?.autoStart ?? true,
+      modelDir: mlxConfig?.modelDir,
+      maxBatchSize: mlxConfig?.max_batch_size ?? 64,
     };
   }
 

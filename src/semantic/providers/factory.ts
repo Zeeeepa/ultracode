@@ -1,7 +1,7 @@
 import { log } from "../../logging/index.js";
 import { makeProviderLogger } from "../../utils/provider-logger.js";
 import { LLAMACPP_EMBEDDING_PORT } from "../llamacpp-server-manager.js";
-import { MLX_EMBEDDING_PORT } from "../mlx-server-manager.js";
+import * as mlxNative from "../mlx-native.js";
 import { OVMS_NATIVE_GRPC_PORT, OVMS_NATIVE_REST_PORT } from "../ovms-native-manager.js";
 import type { EmbeddingProvider, ProviderKind } from "./base.js";
 import { CloudRUProvider } from "./cloudru-provider.js";
@@ -27,13 +27,13 @@ interface DetectionCandidate {
 function buildCandidates(): DetectionCandidate[] {
   const list: DetectionCandidate[] = [];
 
-  // On macOS ARM64, try MLX first (native Metal GPU acceleration)
-  if (process.platform === "darwin" && process.arch === "arm64") {
+  // On macOS ARM64, try MLX native first (direct Metal GPU via libmlx_embed.dylib)
+  if (process.platform === "darwin" && process.arch === "arm64" && mlxNative.isAvailable()) {
     list.push({
       provider: "mlx",
-      model: "intfloat/multilingual-e5-base",
-      url: `http://127.0.0.1:${MLX_EMBEDDING_PORT}/health`,
-      label: "MLX",
+      model: "multilingual-e5-small",
+      url: "native://mlx",  // Not HTTP — native FFI
+      label: "MLX Native",
     });
   }
 
@@ -211,13 +211,10 @@ export interface ProviderFactoryOptions {
     | undefined;
   mlx?:
     | {
-        baseUrl?: string | undefined;
-        timeoutMs?: number | undefined;
-        concurrency?: number | undefined;
-        checkServer?: boolean | undefined;
+        /** Path to model directory with model.safetensors + config.json */
+        modelDir?: string | undefined;
         maxBatchSize?: number | undefined;
-        /** Auto-start MLX server if not running (default: true) */
-        autoStart?: boolean | undefined;
+        maxSeqLen?: number | undefined;
       }
     | undefined;
 }
@@ -353,20 +350,16 @@ const builders = new Map<string, BuilderFn>([
   [
     "mlx",
     (model, opts) => {
-      const baseUrl = opts.mlx?.baseUrl || `http://127.0.0.1:${MLX_EMBEDDING_PORT}`;
-      log.i("FACTORY", "Creating MLX provider", {
-        baseUrl,
-        model,
-        autoStart: opts.mlx?.autoStart,
-      });
+      // Resolve model directory: config → default location
+      const { getDataDir } = require("../../utils/config-paths.js");
+      const { join } = require("node:path");
+      const modelDir = opts.mlx?.modelDir || join(getDataDir(), "mlx", "models", model, "model_gpu_mlx");
+      log.i("FACTORY", "Creating MLX native provider", { model, modelDir });
       return new MlxProvider({
         model,
-        baseUrl,
-        timeoutMs: opts.mlx?.timeoutMs,
-        concurrency: opts.mlx?.concurrency,
+        modelDir,
         maxBatchSize: opts.mlx?.maxBatchSize,
-        checkServer: opts.mlx?.checkServer,
-        autoStart: opts.mlx?.autoStart,
+        maxSeqLen: opts.mlx?.maxSeqLen,
         logger: makeProviderLogger(null, "PROVIDER_MLX"),
       });
     },

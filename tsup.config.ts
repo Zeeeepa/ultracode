@@ -67,6 +67,7 @@ export default defineConfig([
 
       // Bun runtime modules (not available in Node.js)
       "bun:sqlite",
+      "bun:ffi",
 
       // Native modules with dynamic requires - must not be bundled
       "faiss-napi", // Legacy fallback (faiss-client.ts) - main path uses native addon

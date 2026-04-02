@@ -84,14 +84,12 @@ interface CombinedEmbeddingConfig {
     models?: ModelEntry[];
   };
   mlx?: {
-    endpoint?: string;
+    modelDir?: string;
     selected_model?: string;
     max_batch_size?: number;
-    timeoutMs?: number;
-    concurrency?: number;
-    auto_start?: boolean;
     models?: ModelEntry[];
   };
+  model?: string;
   // Common properties (may come from yaml-config)
   vector_dimensions?: number;
   dimensions?: number;
@@ -346,11 +344,10 @@ function resolveProviderConfig(embeddingConfig: CombinedEmbeddingConfig): {
   }
 
   if (embeddingConfig.mlx || embeddingConfig.platform === "mlx") {
-    // MLX provider (Apple Silicon Metal GPU)
+    // MLX native provider (Apple Silicon Metal GPU via libmlx_embed.dylib)
     const mlxConfig = embeddingConfig.mlx || {};
-    const modelName = mlxConfig.selected_model || "intfloat/multilingual-e5-base";
-    const batchSize = mlxConfig.max_batch_size || 128;
-    // Get vector_size from selected model in models array
+    const modelName = mlxConfig.selected_model || embeddingConfig.model || "multilingual-e5-small";
+    const batchSize = mlxConfig.max_batch_size || 64;
     const selectedModel = mlxConfig.models?.find((m: ModelEntry) => m.id === modelName);
     if (selectedModel?.vector_size) {
       embeddingConfig.vector_dimensions = selectedModel.vector_size;
@@ -360,10 +357,8 @@ function resolveProviderConfig(embeddingConfig: CombinedEmbeddingConfig): {
       modelName,
       batchSize,
       providerOptions: {
-        baseUrl: mlxConfig.endpoint || "http://127.0.0.1:8087",
-        timeoutMs: mlxConfig.timeoutMs || 30000,
-        concurrency: mlxConfig.concurrency || 4,
-        maxBatchSize: mlxConfig.max_batch_size || 128,
+        modelDir: mlxConfig.modelDir,
+        maxBatchSize: mlxConfig.max_batch_size || 64,
       },
     };
   }

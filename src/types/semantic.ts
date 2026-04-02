@@ -240,6 +240,8 @@ export interface WorkerEmbeddingConfig {
     | {
         baseUrl?: string | undefined;
         apiKey?: string | undefined;
+        /** Path to model directory (MLX native: model.safetensors + config.json) */
+        modelDir?: string | undefined;
         timeoutMs?: number | undefined;
         concurrency?: number | undefined;
         maxBatchSize?: number | undefined;
@@ -389,12 +391,10 @@ export interface EmbeddingConfig {
 
   mlx?:
     | {
-        baseUrl?: string | undefined;
-        timeoutMs?: number | undefined;
-        concurrency?: number | undefined;
+        /** Path to model directory with model.safetensors + config.json */
+        modelDir?: string | undefined;
         maxBatchSize?: number | undefined;
-        checkServer?: boolean | undefined;
-        autoStart?: boolean | undefined;
+        maxSeqLen?: number | undefined;
       }
     | undefined;
 }
