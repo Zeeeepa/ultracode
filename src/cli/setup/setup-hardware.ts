@@ -9,6 +9,23 @@ import type { GPUInfo } from "./setup-types.js";
 import { c } from "./setup-ui.js";
 
 export function detectGPU(): GPUInfo {
+  // ── Apple Silicon (Metal GPU) ──
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    // Apple Silicon has unified memory — report total system RAM as "VRAM"
+    const { totalmem } = require("node:os");
+    const vramMB = Math.round(totalmem() / 1024 / 1024);
+    // Detect chip name from sysctl
+    let chipName = "Apple Silicon";
+    try {
+      const r = spawnSync("sysctl", ["-n", "machdep.cpu.brand_string"], {
+        encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "ignore"],
+      });
+      if (r.status === 0 && r.stdout) chipName = r.stdout.trim();
+    } catch { /* keep default */ }
+    return { available: true, name: chipName, architecture: "metal", computeCap: 0, isBlackwell: false, vramMB };
+  }
+
+  // ── NVIDIA GPU (nvidia-smi) ──
   try {
     const result = spawnSync(
       "nvidia-smi",
@@ -22,13 +39,11 @@ export function detectGPU(): GPUInfo {
     );
 
     if (result.status !== 0 || !result.stdout) {
-      return { available: false, name: "None", architecture: "cpu", computeCap: 0, isBlackwell: false, vramMB: 0 };
+      // ── AMD GPU (rocm-smi) ──
+      return detectAmdGPU();
     }
 
-    const parts = result.stdout
-      .trim()
-      .split(",")
-      .map((s) => s.trim());
+    const parts = result.stdout.trim().split(",").map((s) => s.trim());
     const gpuName = parts[0] || "Unknown GPU";
     const computeCap = parseFloat(parts[1] || "0");
     const vramMB = parseInt(parts[2] || "0", 10);
@@ -36,13 +51,8 @@ export function detectGPU(): GPUInfo {
     let architecture = "cpu";
     let isBlackwell = false;
 
-    if (computeCap >= 12.0) {
-      architecture = "blackwell";
-      isBlackwell = true;
-    } else if (computeCap >= 10.0) {
-      architecture = "blackwell";
-      isBlackwell = true;
-    } else if (computeCap >= 9.0) architecture = "hopper";
+    if (computeCap >= 10.0) { architecture = "blackwell"; isBlackwell = true; }
+    else if (computeCap >= 9.0) architecture = "hopper";
     else if (computeCap >= 8.9) architecture = "ada";
     else if (computeCap >= 8.6) architecture = "ampere-86";
     else if (computeCap >= 8.0) architecture = "ampere-80";
@@ -51,8 +61,22 @@ export function detectGPU(): GPUInfo {
 
     return { available: true, name: gpuName, architecture, computeCap, isBlackwell, vramMB };
   } catch {
-    return { available: false, name: "None", architecture: "cpu", computeCap: 0, isBlackwell: false, vramMB: 0 };
+    return detectAmdGPU();
   }
+}
+
+function detectAmdGPU(): GPUInfo {
+  try {
+    const r = spawnSync("rocm-smi", ["--showproductname"], {
+      encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "ignore"],
+    });
+    if (r.status === 0 && r.stdout) {
+      const match = r.stdout.match(/Card series:\s*(.+)/i);
+      const name = match?.[1]?.trim() || "AMD GPU";
+      return { available: true, name, architecture: "rdna", computeCap: 0, isBlackwell: false, vramMB: 0 };
+    }
+  } catch { /* fall through */ }
+  return { available: false, name: "None", architecture: "cpu", computeCap: 0, isBlackwell: false, vramMB: 0 };
 }
 
 export function printHardwareInfo(cpu: CPUInfo, gpu: GPUInfo): void {
@@ -75,10 +99,16 @@ export function printHardwareInfo(cpu: CPUInfo, gpu: GPUInfo): void {
 
   // GPU Info - name + architecture + VRAM
   if (gpu.available) {
-    const archName = gpu.architecture.charAt(0).toUpperCase() + gpu.architecture.slice(1);
-    const vramGB = (gpu.vramMB / 1024).toFixed(0);
-    console.error(`${c.dim}  GPU: ${gpu.name} (${archName}, ${vramGB}GB VRAM)${c.reset}`);
-    console.error(`${c.dim}       ${t("hardware.gpu_hint")}${c.reset}`);
+    if (gpu.architecture === "metal") {
+      const ramGB = (gpu.vramMB / 1024).toFixed(0);
+      console.error(`${c.dim}  GPU: ${gpu.name} (Metal, ${ramGB}GB unified)${c.reset}`);
+      console.error(`${c.dim}       Metal GPU — TEI (Docker CPU) or llama.cpp (Metal)${c.reset}`);
+    } else {
+      const archName = gpu.architecture.charAt(0).toUpperCase() + gpu.architecture.slice(1);
+      const vramGB = (gpu.vramMB / 1024).toFixed(0);
+      console.error(`${c.dim}  GPU: ${gpu.name} (${archName}, ${vramGB}GB VRAM)${c.reset}`);
+      console.error(`${c.dim}       ${t("hardware.gpu_hint")}${c.reset}`);
+    }
   } else {
     console.error(`${c.dim}  GPU: ${t("hardware.gpu_not_detected")}${c.reset}`);
   }

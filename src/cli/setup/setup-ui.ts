@@ -1,16 +1,36 @@
 /**
  * UI utilities for setup command - colors, printing, prompts
+ *
+ * Bun quirk: process.stdout and process.stderr may be undefined or lack .write()
+ * when launched in certain modes. We use writeErr() everywhere as a safe wrapper.
  */
 
 import { createInterface } from "node:readline";
+import { openSync, writeSync, readSync, closeSync } from "node:fs";
 
-// Clear screen (safe: falls back to stderr if stdout unavailable, e.g. MCP proxy)
+// Safe stderr write that works even when process.stderr is broken (Bun edge cases)
+let _stderrFd: number | null = null;
+function writeErr(msg: string): void {
+  // Try process.stderr first
+  try {
+    if (process.stderr?.write) {
+      process.stderr.write(msg);
+      return;
+    }
+  } catch { /* fall through */ }
+  // Fallback: write to fd 2 directly
+  try {
+    if (_stderrFd === null) _stderrFd = 2;  // fd 2 = stderr
+    writeSync(_stderrFd, msg);
+  } catch { /* give up */ }
+}
+
+// Clear screen
 export function clearScreen(): void {
   try {
-    const stream = process.stdout?.writable ? process.stdout : process.stderr;
-    stream.write("\x1b[2J\x1b[H");
+    writeErr("\x1b[2J\x1b[H");
   } catch {
-    // No TTY available (MCP proxy, CI, pipe) — just skip
+    // No TTY available — skip
   }
 }
 
@@ -61,15 +81,29 @@ export function printError(msg: string): void {
   console.error(`${c.red}[ERROR]${c.reset} ${msg}`);
 }
 
-export async function prompt(question: string): Promise<string> {
-  const output = process.stdout?.writable ? process.stdout : process.stderr;
-  const rl = createInterface({ input: process.stdin, output });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
+export function prompt(question: string): Promise<string> {
+  writeErr(question);
+
+  // Synchronous line read from /dev/tty using fd — works reliably in Bun and Node.
+  // This blocks the event loop, which is fine for an interactive CLI prompt.
+  try {
+    const fd = openSync("/dev/tty", "r");
+    const buf = Buffer.alloc(1024);
+    let line = "";
+    // Read one byte at a time until newline
+    while (true) {
+      const bytesRead = readSync(fd, buf, 0, 1, null);
+      if (bytesRead === 0) break;
+      const ch = buf.toString("utf8", 0, 1);
+      if (ch === "\n" || ch === "\r") break;
+      line += ch;
+    }
+    closeSync(fd);
+    return Promise.resolve(line.trim());
+  } catch {
+    // No TTY — return empty
+    return Promise.resolve("");
+  }
 }
 
 export function printCompleteBanner(): void {

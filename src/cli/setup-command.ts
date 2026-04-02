@@ -531,8 +531,11 @@ const isMain =
   process.argv[1]?.includes("setup-command");
 
 if (isMain) {
-  runSetup(process.argv.slice(2)).catch((error) => {
-    console.error("Setup failed:", error);
-    process.exit(1);
-  });
+  // Top-level await alternative: use .then/.catch to ensure Bun doesn't exit early
+  runSetup(process.argv.slice(2))
+    .then(() => process.exit(0))
+    .catch((error) => {
+      console.error("Setup failed:", error);
+      process.exit(1);
+    });
 }

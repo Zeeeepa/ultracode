@@ -163,18 +163,51 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   // Hardware detection
   const isNvidiaGPU = gpu.available && /nvidia|geforce|rtx|gtx|quadro/i.test(gpu.name);
   const isAmdGPU = gpu.available && /amd|radeon|rx\s?\d|vega|navi/.test(gpu.name.toLowerCase());
+  const isMetal = gpu.available && gpu.architecture === "metal";
   const isWindows = process.platform === "win32";
   const isLinux = process.platform === "linux";
 
   // ══════════════════════════════════════════════════════════════════════
-  // 1. TEI - recommended GPU provider (measured: 1193 emb/s with e5-small)
+  // Apple Silicon → MLX (native Metal GPU) + llama.cpp fallback
   // ══════════════════════════════════════════════════════════════════════
-  if (gpu.available) {
+  if (isMetal) {
+    options.push({
+      id: "mlx",
+      name: "MLX (Apple Metal Native)",
+      recommended: true,
+      speed: "~400 emb/s (Metal GPU)",
+      pros: [
+        "Native Metal GPU — полная утилизация Apple Silicon",
+        "Без Docker, без внешних бинарников",
+        "Автоматический setup (python venv + pip)",
+        "HuggingFace модели напрямую",
+      ],
+      cons: ["Требует Python 3.10+"],
+      available: true,
+    });
+
+    options.push({
+      id: "llamacpp",
+      name: t("provider.llamacpp.name"),
+      recommended: false,
+      speed: "~300 emb/s (CPU)",
+      pros: ta("provider.llamacpp.pros"),
+      cons: ta("provider.llamacpp.cons"),
+      available: true,
+    });
+
+    return options;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 1. TEI - recommended for NVIDIA GPU (measured: 1193 emb/s)
+  // ══════════════════════════════════════════════════════════════════════
+  if (isNvidiaGPU || isLinux) {
     options.push({
       id: "tei",
       name: t("provider.tei.name"),
-      recommended: true, // Default recommendation for any GPU
-      speed: "1193 emb/s", // Measured with e5-small on RTX 5090
+      recommended: isNvidiaGPU,
+      speed: isNvidiaGPU ? "1193 emb/s" : "~150 emb/s (CPU)",
       pros: ta("provider.tei.pros"),
       cons: [...ta("provider.tei.cons")],
       available: true,
@@ -182,14 +215,14 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // 2. vLLM - NVIDIA GPU alternative (measured: 1352 emb/s with e5-small)
+  // 2. vLLM - NVIDIA GPU alternative (measured: 1352 emb/s)
   // ══════════════════════════════════════════════════════════════════════
   if (isNvidiaGPU) {
     options.push({
       id: "vllm",
       name: t("provider.vllm.name"),
       recommended: false,
-      speed: "1352 emb/s", // Measured with e5-small on RTX 5090
+      speed: "1352 emb/s",
       pros: ta("provider.vllm.pros"),
       cons: ta("provider.vllm.cons"),
       available: true,
@@ -197,15 +230,14 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // 3. llama.cpp - native GGUF (measured: 441 emb/s centralized mode)
-  //    Hidden when NVIDIA GPU detected (TEI/vLLM are better options)
+  // 3. llama.cpp - native GGUF (441 emb/s). For AMD GPU / no-Docker
   // ══════════════════════════════════════════════════════════════════════
   if (!isNvidiaGPU) {
     options.push({
       id: "llamacpp",
       name: t("provider.llamacpp.name"),
-      recommended: isAmdGPU, // Recommend for AMD GPUs (Vulkan backend)
-      speed: "441 emb/s", // Measured with e5-small, centralized mode, parallel=8
+      recommended: isAmdGPU,
+      speed: "441 emb/s",
       pros: ta("provider.llamacpp.pros"),
       cons: ta("provider.llamacpp.cons"),
       available: true,
@@ -213,15 +245,14 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // 4. OVMS Native - OpenVINO (measured: 260-326 emb/s with e5-small)
-  //    Hidden when any GPU detected (GPU providers are faster)
+  // 4. OVMS Native - OpenVINO (260-326 emb/s). CPU-only, Intel optimized
   // ══════════════════════════════════════════════════════════════════════
   if (!gpu.available && (isWindows || isLinux)) {
     options.push({
       id: "ovms-native",
       name: t("provider.ovms.name"),
-      recommended: true, // Best CPU-only option
-      speed: "260-326 emb/s", // Measured with e5-small, iGPU + CPU, ratio 3:5
+      recommended: true,
+      speed: "260-326 emb/s",
       pros: ta("provider.ovms.pros"),
       cons: ta("provider.ovms.cons"),
       available: true,
