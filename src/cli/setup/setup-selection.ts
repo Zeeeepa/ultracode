@@ -177,12 +177,11 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
       recommended: true,
       speed: "~400 emb/s (Metal GPU)",
       pros: [
-        "Native Metal GPU — полная утилизация Apple Silicon",
-        "Без Docker, без внешних бинарников",
-        "Автоматический setup (python venv + pip)",
-        "HuggingFace модели напрямую",
+        "Native Metal GPU — прямой inference на Apple Silicon",
+        "Никаких зависимостей — всё в комплекте",
+        "Модель скачивается из CDN (~100-500MB)",
       ],
-      cons: ["Требует Python 3.10+"],
+      cons: ["Только macOS Apple Silicon"],
       available: true,
     });
 

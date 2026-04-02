@@ -1,21 +1,19 @@
 /**
  * MLX Native Installation (Apple Silicon / Metal GPU)
  *
- * Downloads libmlx_embed.dylib + libmlx.dylib and safetensors model
- * from CDN (GitHub Releases). No Python, no Docker — direct Metal GPU.
+ * dylibs (libmlx_embed + libmlx) bundled in npm package.
+ * Only downloads safetensors model from CDN (GitHub Releases).
  */
 
-import { existsSync, mkdirSync, createWriteStream } from "node:fs";
-import { join } from "node:path";
-import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
+import { existsSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { join, dirname } from "node:path";
 import { getDataDir } from "../../../utils/config-paths.js";
 import type { EmbeddingModel, InstallResult } from "../setup-types.js";
-import { c, printError, printInfo, printOK, printWarn } from "../setup-ui.js";
+import { printError, printInfo, printOK } from "../setup-ui.js";
 
 const CDN_BASE = "https://github.com/faxenoff/ultracode/releases/download/v.6.0.2-zig";
 
-// Map model IDs to CDN archive names
 const MODEL_CDN_MAP: Record<string, string> = {
   "multilingual-e5-small": "multilingual-e5-small",
   "multilingual-e5-base": "multilingual-e5-base",
@@ -28,53 +26,15 @@ const MODEL_CDN_MAP: Record<string, string> = {
   "bge-m3": "bge-m3",
 };
 
-async function downloadFile(url: string, dest: string): Promise<boolean> {
-  try {
-    const resp = await fetch(url, { redirect: "follow" });
-    if (!resp.ok || !resp.body) {
-      printError(`Download failed: ${resp.status} ${url}`);
-      return false;
-    }
-    const stream = Readable.fromWeb(resp.body as any);
-    await pipeline(stream, createWriteStream(dest));
-    return true;
-  } catch (e) {
-    printError(`Download error: ${e}`);
-    return false;
-  }
+function curlDownload(url: string, dest: string): boolean {
+  const r = spawnSync("curl", ["-fSL", "--progress-bar", "-o", dest, url], {
+    stdio: ["pipe", "inherit", "inherit"],
+    timeout: 600_000,
+  });
+  return r.status === 0;
 }
 
-async function downloadDylibs(mlxDir: string): Promise<boolean> {
-  // Check if bundled in npm package first
-  const bundledDir = join(__dirname, "..", "..", "..", "..", "external-libs", "mlx");
-  if (existsSync(join(bundledDir, "libmlx_embed.dylib")) && existsSync(join(bundledDir, "libmlx.dylib"))) {
-    printOK("MLX dylibs в составе пакета");
-    return true;
-  }
-
-  const libDir = join(mlxDir, "lib");
-  mkdirSync(libDir, { recursive: true });
-
-  const embedDylib = join(libDir, "libmlx_embed.dylib");
-  const mlxDylib = join(libDir, "libmlx.dylib");
-
-  if (existsSync(embedDylib) && existsSync(mlxDylib)) {
-    printOK("MLX dylibs уже скачаны");
-    return true;
-  }
-
-  printInfo("Скачивание libmlx_embed.dylib (~100KB)...");
-  if (!await downloadFile(`${CDN_BASE}/libmlx_embed.dylib`, embedDylib)) return false;
-  printOK("libmlx_embed.dylib");
-
-  printInfo("Скачивание libmlx.dylib (~16MB)...");
-  if (!await downloadFile(`${CDN_BASE}/libmlx.dylib`, mlxDylib)) return false;
-  printOK("libmlx.dylib");
-
-  return true;
-}
-
-async function downloadModel(mlxDir: string, modelId: string): Promise<string | null> {
+function ensureModel(mlxDir: string, modelId: string): string | null {
   const cdnName = MODEL_CDN_MAP[modelId];
   if (!cdnName) {
     printError(`Неизвестная модель: ${modelId}`);
@@ -91,25 +51,24 @@ async function downloadModel(mlxDir: string, modelId: string): Promise<string | 
 
   mkdirSync(modelDir, { recursive: true });
 
-  // Download model files: model.safetensors, config.json, mlx_config.json
   const files = ["model.safetensors", "config.json", "mlx_config.json"];
 
   for (const file of files) {
-    const url = `${CDN_BASE}/models/${cdnName}/model_gpu_mlx/${file}`;
     const dest = join(modelDir, file);
-
     if (existsSync(dest)) continue;
 
-    const label = file === "model.safetensors" ? `${file} (может занять 1-2 минуты)` : file;
+    const label = file === "model.safetensors" ? `${file} (это может занять пару минут)` : file;
     printInfo(`Скачивание ${label}...`);
 
-    if (!await downloadFile(url, dest)) {
+    const url = `${CDN_BASE}/models/${cdnName}/model_gpu_mlx/${file}`;
+    if (!curlDownload(url, dest)) {
       printError(`Не удалось скачать ${file}`);
       return null;
     }
+    printOK(file);
   }
 
-  printOK(`Модель ${modelId} скачана`);
+  printOK(`Модель ${modelId} готова`);
   return modelDir;
 }
 
@@ -129,28 +88,25 @@ export async function installMLX(
   const mlxDir = join(dataDir, "mlx");
   mkdirSync(mlxDir, { recursive: true });
 
-  // Step 1: Download dylibs
-  if (!await downloadDylibs(mlxDir)) {
-    return { success: false, error: "Failed to download MLX libraries" };
-  }
-
-  // Step 2: Download model
-  // Map embedding model to CDN model ID
+  // Resolve model ID
   let cdnModelId = model.id;
-  // Handle mlx-prefixed model IDs from config
   if (cdnModelId.startsWith("mlx-")) {
-    cdnModelId = cdnModelId.replace("mlx-", "").replace("e5-small", "multilingual-e5-small").replace("e5-base", "multilingual-e5-base");
+    cdnModelId = cdnModelId
+      .replace("mlx-e5-small", "multilingual-e5-small")
+      .replace("mlx-e5-base", "multilingual-e5-base")
+      .replace("mlx-bge-m3", "bge-m3");
   }
 
-  const modelDir = await downloadModel(mlxDir, cdnModelId);
+  // Download model from CDN
+  const modelDir = ensureModel(mlxDir, cdnModelId);
   if (!modelDir) {
     return { success: false, error: "Failed to download model" };
   }
 
   console.error("");
-  printOK(`Модель: ${model.name} (${cdnModelId})`);
-  printOK(`Metal GPU inference — без Python, без Docker`);
-  printOK(`Модель: ${modelDir}`);
+  printOK(`Провайдер: MLX Native (Metal GPU)`);
+  printOK(`Модель: ${cdnModelId}`);
+  printOK(`Путь: ${modelDir}`);
   printInfo("MLX загрузится автоматически при индексации");
 
   return {
