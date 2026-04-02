@@ -50,6 +50,7 @@
     "external-libs/**/*.dll",
     "external-libs/**/*.so*",
     "external-libs/**/*.metallib",
+    "scripts/postinstall.sh",
     "scripts/postinstall.cjs",
     "scripts/build-native-libs-macos.sh",
     "scripts/setup.cmd",
@@ -122,7 +123,7 @@
     "smoke:clean": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop --clean",
     "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",
     "clean": "rm -rf dist",
-    "postinstall": "node scripts/postinstall.cjs",
+    "postinstall": "sh scripts/postinstall.sh",
     "prepublishOnly": "npm run build",
     "prepare": "husky"
   },
