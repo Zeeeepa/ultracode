@@ -4,6 +4,10 @@
 
 set -e  # Exit on error
 
+# Ensure common tool paths are available (macOS: bun, cargo, etc.)
+[ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+
 COLORS_RESET='\033[0m'
 COLORS_BOLD='\033[1m'
 COLORS_GREEN='\033[32m'

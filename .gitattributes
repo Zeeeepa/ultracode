@@ -1,11 +1,9 @@
 # Все текстовые файлы — LF (Unix)
 * text=auto eol=lf
-
 # Windows scripts — CRLF
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
-
 # Явно бинарные файлы
 *.png binary
 *.jpg binary
@@ -16,7 +14,6 @@
 *.dll binary
 *.bin binary
 *.wasm binary
-
 # Текстовые файлы с явным LF
 *.ts text eol=lf
 *.js text eol=lf
@@ -31,4 +28,7 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 *.toml text eol=lf
-
+external-libs/**/*.dll filter=lfs diff=lfs merge=lfs -text
+external-libs/**/*.so* filter=lfs diff=lfs merge=lfs -text
+external-libs/**/*.node filter=lfs diff=lfs merge=lfs -text
+external-libs/**/*.metallib filter=lfs diff=lfs merge=lfs -text

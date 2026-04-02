@@ -4,6 +4,19 @@
 
 set -e  # Exit on error
 
+# Ensure common tool paths are available (macOS: bun, cargo, etc.)
+[ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+
+# Move cosmocc out of priority PATH so system make/gcc are found first by node-gyp.
+# cosmocc's make is a Cosmopolitan binary that causes ENOEXEC in node-gyp builds.
+if [[ "$PATH" == *"cosmocc/bin"* ]]; then
+    export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v 'cosmocc/bin' | tr '\n' ':' | sed 's/:$//')
+    # Re-add cosmocc at the end so cosmocc itself is still available
+    [ -d "$HOME/.cosmo/bin" ] && export PATH="$PATH:$HOME/.cosmo/bin"
+    [ -d "$HOME/.local/cosmocc/bin" ] && export PATH="$PATH:$HOME/.local/cosmocc/bin"
+fi
+
 echo "========================================"
 echo "Building with Bun (Ultra-Fast Build)"
 echo "========================================"

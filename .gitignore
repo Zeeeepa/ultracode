@@ -17,10 +17,8 @@ dist/
 # Backup files from refactoring
 .backup/
 
-# Native modules (CUDA) - platform-specific, built locally
-# Sources moved to external-tools/native (also ignored)
+# Native modules build artifacts (not the final .node files in external-libs/)
 native/
-*.node
 build/
 .build-cache/
 
@@ -86,10 +84,10 @@ output.txt
 build.ps1
 Dev.Scripts/errors.txt
 
-# External libs — heavy build artifacts (CUDA addon, FAISS GPU headers/DLLs)
-# Keep faiss-{platform}-x64/ (small DLL deps for faiss-napi legacy) and tar.gz archives
-/external-libs/cuda-*/
+# External libs — keep pre-built native .node modules in git
+# Only ignore FAISS GPU (too large) and tar.gz archives
 /external-libs/faiss-gpu-*/
+/external-libs/*.tar.gz
 
 # External tools & dependencies (downloaded during setup)
 /external-tools/emsdk/
@@ -104,6 +102,7 @@ external-tools/**/target/
 external-tools/**/pkg/
 external-tools/**/build/
 external-tools/**/node_modules/
+# Build intermediates in external-tools (final .node goes to external-libs/)
 external-tools/**/*.node
 external-tools/**/*.exp
 external-tools/**/*.lib

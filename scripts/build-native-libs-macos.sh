@@ -15,6 +15,18 @@
 
 set -e
 
+# Ensure common tool paths are available (macOS: node/npm, cargo, bun)
+# Order matters: real Node.js must come BEFORE bun (bun ships a node shim)
+[ -d "/opt/homebrew/bin" ] && export PATH="/opt/homebrew/bin:$PATH"
+[ -d "/usr/local/bin" ] && export PATH="/usr/local/bin:$PATH"
+[ -d "$HOME/.nvm/versions/node" ] && {
+    NODE_DIR=$(ls -d "$HOME/.nvm/versions/node/"* 2>/dev/null | tail -1)
+    [ -n "$NODE_DIR" ] && export PATH="$NODE_DIR/bin:$PATH"
+}
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+# Bun at the end — its node/npx shims must not shadow real ones
+[ -d "$HOME/.bun/bin" ] && export PATH="$PATH:$HOME/.bun/bin"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -231,7 +243,9 @@ check_npm_deps() {
     fi
 
     # Check cmake-js
-    if ! npx cmake-js --version &>/dev/null; then
+    local NPX_CMD="npx"
+    command -v bunx &>/dev/null && NPX_CMD="bunx"
+    if ! $NPX_CMD cmake-js --version &>/dev/null; then
         print_info "Installing cmake-js..."
         npm install cmake-js --save-dev
     fi
@@ -252,6 +266,18 @@ check_npm_deps() {
 
 build_metal_backend() {
     print_step "Building Metal backend for Apple Silicon..."
+
+    # Check if Metal compiler toolchain is available, install if missing
+    if ! xcrun -sdk macosx metal -v &>/dev/null 2>&1; then
+        print_info "Metal Toolchain not found, downloading..."
+        if xcodebuild -downloadComponent MetalToolchain; then
+            print_success "Metal Toolchain installed"
+        else
+            print_error "Failed to install Metal Toolchain"
+            print_info "Try manually: xcodebuild -downloadComponent MetalToolchain"
+            return 1
+        fi
+    fi
 
     local OUTPUT_PATH="$OUTPUT_DIR/metal-darwin-arm64"
     mkdir -p "$OUTPUT_PATH"
@@ -554,7 +580,14 @@ CMAKE_FILE
     cd "$METAL_SRC_DIR"
 
     # Build with cmake-js (dependencies already installed via check_npm_deps)
-    npx cmake-js compile
+    if command -v bunx &> /dev/null; then
+        bunx cmake-js compile
+    elif command -v npx &> /dev/null; then
+        npx cmake-js compile
+    else
+        echo "ERROR: Neither bunx nor npx found" >&2
+        return 1
+    fi
 
     # Copy output
     if [ -f "build/Release/ultracode_metal.node" ]; then
