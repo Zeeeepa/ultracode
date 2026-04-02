@@ -48,11 +48,11 @@ const hasTerminal = ttyWriteFd != null;
 
 const log = (...args) => {
   const msg = args.join(" ") + "\n";
-  // Write directly to terminal device (bypasses npm's capture)
   if (ttyWriteFd != null) {
-    try { writeSync(ttyWriteFd, msg); } catch {}
+    // Write directly to terminal device (bypasses npm's capture)
+    try { writeSync(ttyWriteFd, msg); return; } catch {}
   }
-  // Also write to stderr as fallback
+  // Fallback to stderr only if tty not available
   process.stderr.write(msg);
 };
 
@@ -258,6 +258,11 @@ async function main() {
     return;
   }
 
+  // Skip when called from build scripts (ULTRACODE_BUILD=1)
+  if (process.env.ULTRACODE_BUILD === "1") {
+    return;
+  }
+
   const platformInfo = detectPlatformInfo();
 
   printBox("UltraCode - Installed", [
@@ -373,8 +378,10 @@ async function runSetupWizard() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`Postinstall script error: ${error.message}\n`);
-  // Don't exit with error - postinstall failures shouldn't break npm install
-  process.exit(0);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    process.stderr.write(`Postinstall script error: ${error.message}\n`);
+    // Don't exit with error - postinstall failures shouldn't break npm install
+    process.exit(0);
+  });

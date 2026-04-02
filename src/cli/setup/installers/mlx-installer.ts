@@ -5,9 +5,9 @@
  * Only downloads safetensors model from CDN (GitHub Releases).
  */
 
-import { existsSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { getDataDir } from "../../../utils/config-paths.js";
 import type { EmbeddingModel, InstallResult } from "../setup-types.js";
 import { printError, printInfo, printOK } from "../setup-ui.js";
@@ -72,10 +72,7 @@ function ensureModel(mlxDir: string, modelId: string): string | null {
   return modelDir;
 }
 
-export async function installMLX(
-  model: EmbeddingModel,
-  _language: "en" | "multi",
-): Promise<InstallResult> {
+export async function installMLX(model: EmbeddingModel, _language: "en" | "multi"): Promise<InstallResult> {
   printInfo("Настройка MLX Native (Apple Metal GPU)...");
   console.error("");
 

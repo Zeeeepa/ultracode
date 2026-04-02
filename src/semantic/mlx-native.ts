@@ -12,17 +12,17 @@
  * CDN: https://github.com/faxenoff/ultracode/releases/download/v.6.0.2-zig/
  */
 
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { dlopen, FFIType, ptr, toBuffer, CString } from "bun:ffi";
+import { dirname, join } from "node:path";
 import { log } from "../logging/index.js";
 import { getDataDir } from "../utils/config-paths.js";
 
 export interface MlxNativeConfig {
-  modelDir: string;     // Path to dir with model.safetensors + config.json
-  maxBatch?: number;    // Default: 64
-  maxSeq?: number;      // Default: 512
-  hiddenDim?: number;   // Default: 384 (auto-detected from model)
+  modelDir: string; // Path to dir with model.safetensors + config.json
+  maxBatch?: number; // Default: 64
+  maxSeq?: number; // Default: 512
+  hiddenDim?: number; // Default: 384 (auto-detected from model)
 }
 
 interface MlxNativeState {
@@ -113,10 +113,11 @@ export function loadModel(config: MlxNativeConfig): boolean {
     // Ensure libmlx.dylib is loadable (it's a dependency of libmlx_embed)
     // Set DYLD_LIBRARY_PATH won't work at runtime, but rpath or adjacent works
     const mlxDir = dirname(mlxPath);
-    if (process.env.DYLD_LIBRARY_PATH) {
-      process.env.DYLD_LIBRARY_PATH = `${mlxDir}:${process.env.DYLD_LIBRARY_PATH}`;
+    const existingPath = process.env["DYLD_LIBRARY_PATH"];
+    if (existingPath) {
+      process.env["DYLD_LIBRARY_PATH"] = `${mlxDir}:${existingPath}`;
     } else {
-      process.env.DYLD_LIBRARY_PATH = mlxDir;
+      process.env["DYLD_LIBRARY_PATH"] = mlxDir;
     }
 
     const lib = dlopen(dylibPath, {
@@ -185,7 +186,7 @@ export function embed(
     state.handle,
     ptr(inputIds),
     ptr(attentionMask),
-    null,  // token_type_ids (optional for single-segment)
+    null, // token_type_ids (optional for single-segment)
     batchSize,
     seqLen,
     ptr(output),
@@ -206,7 +207,9 @@ export function unload(): void {
   if (state?.loaded && state.handle) {
     try {
       state.lib.symbols.mlx_embed_free(state.handle);
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     state = null;
   }
 }

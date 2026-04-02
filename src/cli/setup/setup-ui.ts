@@ -5,8 +5,7 @@
  * when launched in certain modes. We use writeErr() everywhere as a safe wrapper.
  */
 
-import { createInterface } from "node:readline";
-import { openSync, writeSync, readSync, closeSync } from "node:fs";
+import { closeSync, openSync, readSync, writeSync } from "node:fs";
 
 // Safe stderr write that works even when process.stderr is broken (Bun edge cases)
 let _stderrFd: number | null = null;
@@ -17,12 +16,16 @@ function writeErr(msg: string): void {
       process.stderr.write(msg);
       return;
     }
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   // Fallback: write to fd 2 directly
   try {
-    if (_stderrFd === null) _stderrFd = 2;  // fd 2 = stderr
+    if (_stderrFd === null) _stderrFd = 2; // fd 2 = stderr
     writeSync(_stderrFd, msg);
-  } catch { /* give up */ }
+  } catch {
+    /* give up */
+  }
 }
 
 // Clear screen

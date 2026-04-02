@@ -1,4 +1,12 @@
 #!/bin/sh
 
-# Run biome check on staged files only
-npx biome check --staged --write --no-errors-on-unmatched --files-ignore-unknown=true
+# Ensure bun in PATH (git hooks don't inherit user shell PATH)
+BUN_DIR="${HOME}/.bun/bin"
+[ -d "$BUN_DIR" ] && export PATH="$BUN_DIR:$PATH"
+
+# Run biome check on staged files only (bunx or npx)
+if command -v bunx >/dev/null 2>&1; then
+  bunx biome check --staged --write --no-errors-on-unmatched --files-ignore-unknown=true
+elif command -v npx >/dev/null 2>&1; then
+  npx biome check --staged --write --no-errors-on-unmatched --files-ignore-unknown=true
+fi

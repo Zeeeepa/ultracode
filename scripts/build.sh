@@ -4,6 +4,9 @@
 
 set -e  # Exit on error
 
+# Skip postinstall during build
+export ULTRACODE_BUILD=1
+
 # Ensure common tool paths are available (macOS: bun, cargo, etc.)
 [ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"

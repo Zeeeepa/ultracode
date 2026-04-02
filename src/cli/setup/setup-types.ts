@@ -121,6 +121,8 @@ export interface ProviderOption {
 
 export interface InstallResult {
   success: boolean;
+  error?: string | undefined;
+  config?: Record<string, unknown> | undefined;
   useIR?: boolean | undefined;
   irPath?: string | undefined;
   /** Multi-device endpoints created (for round-robin load balancing) */
