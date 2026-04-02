@@ -24,27 +24,25 @@ cd "$PROJECT_ROOT"
 SETUP_FILE_JS="dist/cli/setup-command.js"
 SETUP_FILE_TS="src/cli/setup-command.ts"
 
-if [ -f "$SETUP_FILE_JS" ]; then
-    # Running compiled JS - use node directly
-    exec node "$SETUP_FILE_JS" "$@"
-fi
-
-# Running TypeScript source - need TS runtime
-# Check if bun is available
+# Use bun (preferred) or node to run setup
 if command -v bun &> /dev/null; then
-    exec bun run "$SETUP_FILE_TS" "$@"
+    if [ -f "$SETUP_FILE_JS" ]; then
+        exec bun "$SETUP_FILE_JS" "$@"
+    elif [ -f "$SETUP_FILE_TS" ]; then
+        exec bun "$SETUP_FILE_TS" "$@"
+    fi
 fi
 
-# Fallback to tsx if bun not available
+if command -v node &> /dev/null; then
+    if [ -f "$SETUP_FILE_JS" ]; then
+        exec node "$SETUP_FILE_JS" "$@"
+    fi
+fi
+
 if command -v tsx &> /dev/null; then
-    exec tsx "$SETUP_FILE_TS" "$@"
+    [ -f "$SETUP_FILE_TS" ] && exec tsx "$SETUP_FILE_TS" "$@"
 fi
 
-# Fallback to npx tsx
-if command -v npx &> /dev/null; then
-    exec npx tsx "$SETUP_FILE_TS" "$@"
-fi
-
-echo "ERROR: No TypeScript runtime found (bun, tsx, or npx)"
-echo "Please install bun: https://bun.sh"
+echo "ERROR: No JS runtime found (bun, node, or tsx)"
+echo "Install bun: https://bun.sh"
 exit 1
