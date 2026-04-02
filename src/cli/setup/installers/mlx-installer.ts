@@ -1,109 +1,157 @@
 /**
- * MLX Embedding Installation (Apple Silicon / Metal GPU)
+ * MLX Native Installation (Apple Silicon / Metal GPU)
  *
- * Sets up Python venv with MLX dependencies and writes config.
- * The actual server lifecycle is managed by mlx-server-manager.ts at runtime.
+ * Downloads libmlx_embed.dylib + libmlx.dylib and safetensors model
+ * from CDN (GitHub Releases). No Python, no Docker — direct Metal GPU.
  */
 
-import { existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, createWriteStream } from "node:fs";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import { getDataDir } from "../../../utils/config-paths.js";
 import type { EmbeddingModel, InstallResult } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn } from "../setup-ui.js";
 
-const MLX_PORT = 8087;
+const CDN_BASE = "https://github.com/faxenoff/ultracode/releases/download/v.6.0.2-zig";
 
-function findPython(): string | null {
-  for (const cmd of ["python3", "python"]) {
-    const r = spawnSync(cmd, ["--version"], { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-    if (r.status === 0 && r.stdout) {
-      const ver = r.stdout.match(/(\d+)\.(\d+)/);
-      if (ver && parseInt(ver[1]) >= 3 && parseInt(ver[2]) >= 10) return cmd;
+// Map model IDs to CDN archive names
+const MODEL_CDN_MAP: Record<string, string> = {
+  "multilingual-e5-small": "multilingual-e5-small",
+  "multilingual-e5-base": "multilingual-e5-base",
+  "snowflake-arctic-embed-xs": "snowflake-arctic-embed-xs",
+  "all-MiniLM-L6-v2": "all-MiniLM-L6-v2",
+  "nomic-embed-text-v1.5": "nomic-embed-text-v1.5",
+  "gte-modernbert-base": "gte-modernbert-base",
+  "modernbert-embed-base": "modernbert-embed-base",
+  "mxbai-embed-xsmall-v1": "mxbai-embed-xsmall-v1",
+  "bge-m3": "bge-m3",
+};
+
+async function downloadFile(url: string, dest: string): Promise<boolean> {
+  try {
+    const resp = await fetch(url, { redirect: "follow" });
+    if (!resp.ok || !resp.body) {
+      printError(`Download failed: ${resp.status} ${url}`);
+      return false;
+    }
+    const stream = Readable.fromWeb(resp.body as any);
+    await pipeline(stream, createWriteStream(dest));
+    return true;
+  } catch (e) {
+    printError(`Download error: ${e}`);
+    return false;
+  }
+}
+
+async function downloadDylibs(mlxDir: string): Promise<boolean> {
+  const libDir = join(mlxDir, "lib");
+  mkdirSync(libDir, { recursive: true });
+
+  const embedDylib = join(libDir, "libmlx_embed.dylib");
+  const mlxDylib = join(libDir, "libmlx.dylib");
+
+  if (existsSync(embedDylib) && existsSync(mlxDylib)) {
+    printOK("MLX dylibs уже скачаны");
+    return true;
+  }
+
+  printInfo("Скачивание libmlx_embed.dylib (~100KB)...");
+  if (!await downloadFile(`${CDN_BASE}/libmlx_embed.dylib`, embedDylib)) return false;
+  printOK("libmlx_embed.dylib");
+
+  printInfo("Скачивание libmlx.dylib (~16MB)...");
+  if (!await downloadFile(`${CDN_BASE}/libmlx.dylib`, mlxDylib)) return false;
+  printOK("libmlx.dylib");
+
+  return true;
+}
+
+async function downloadModel(mlxDir: string, modelId: string): Promise<string | null> {
+  const cdnName = MODEL_CDN_MAP[modelId];
+  if (!cdnName) {
+    printError(`Неизвестная модель: ${modelId}`);
+    return null;
+  }
+
+  const modelDir = join(mlxDir, "models", modelId, "model_gpu_mlx");
+  const safetensors = join(modelDir, "model.safetensors");
+
+  if (existsSync(safetensors)) {
+    printOK(`Модель ${modelId} уже скачана`);
+    return modelDir;
+  }
+
+  mkdirSync(modelDir, { recursive: true });
+
+  // Download model files: model.safetensors, config.json, mlx_config.json
+  const files = ["model.safetensors", "config.json", "mlx_config.json"];
+
+  for (const file of files) {
+    const url = `${CDN_BASE}/models/${cdnName}/model_gpu_mlx/${file}`;
+    const dest = join(modelDir, file);
+
+    if (existsSync(dest)) continue;
+
+    const label = file === "model.safetensors" ? `${file} (может занять 1-2 минуты)` : file;
+    printInfo(`Скачивание ${label}...`);
+
+    if (!await downloadFile(url, dest)) {
+      printError(`Не удалось скачать ${file}`);
+      return null;
     }
   }
-  return null;
+
+  printOK(`Модель ${modelId} скачана`);
+  return modelDir;
 }
 
 export async function installMLX(
   model: EmbeddingModel,
   _language: "en" | "multi",
 ): Promise<InstallResult> {
-  printInfo("Настройка MLX (Apple Metal Native)...");
+  printInfo("Настройка MLX Native (Apple Metal GPU)...");
   console.error("");
 
-  // Check Python 3.10+
-  const python = findPython();
-  if (!python) {
-    printError("Python 3.10+ не найден");
-    printInfo("Установите: brew install python@3.12");
-    return { success: false, error: "Python 3.10+ not found" };
+  if (process.platform !== "darwin" || process.arch !== "arm64") {
+    printError("MLX доступен только на macOS Apple Silicon");
+    return { success: false, error: "macOS ARM64 required" };
   }
-  printOK(`Python найден: ${python}`);
 
-  // Setup venv
   const dataDir = getDataDir();
   const mlxDir = join(dataDir, "mlx");
-  const venvDir = join(mlxDir, "venv");
+  mkdirSync(mlxDir, { recursive: true });
 
-  if (!existsSync(venvDir)) {
-    printInfo("Создание Python venv...");
-    const r = spawnSync(python, ["-m", "venv", venvDir], {
-      encoding: "utf-8",
-      timeout: 60_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    if (r.status !== 0) {
-      printError(`Ошибка создания venv: ${r.stderr}`);
-      return { success: false, error: "Failed to create venv" };
-    }
-    printOK("venv создан");
-  } else {
-    printOK("venv уже существует");
+  // Step 1: Download dylibs
+  if (!await downloadDylibs(mlxDir)) {
+    return { success: false, error: "Failed to download MLX libraries" };
   }
 
-  // Install MLX dependencies
-  const pip = join(venvDir, "bin", "pip");
-  const deps = ["mlx>=0.21.0", "mlx-embedding-models>=0.1.0", "fastapi", "uvicorn[standard]"];
-
-  printInfo("Установка MLX зависимостей (может занять 1-2 минуты)...");
-  const installResult = spawnSync(pip, ["install", "--upgrade", ...deps], {
-    encoding: "utf-8",
-    timeout: 300_000,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-
-  if (installResult.status !== 0) {
-    printError(`pip install failed: ${installResult.stderr?.slice(0, 200)}`);
-    return { success: false, error: "Failed to install MLX dependencies" };
+  // Step 2: Download model
+  // Map embedding model to CDN model ID
+  let cdnModelId = model.id;
+  // Handle mlx-prefixed model IDs from config
+  if (cdnModelId.startsWith("mlx-")) {
+    cdnModelId = cdnModelId.replace("mlx-", "").replace("e5-small", "multilingual-e5-small").replace("e5-base", "multilingual-e5-base");
   }
-  printOK("MLX зависимости установлены");
 
-  // Verify MLX import
-  const venvPython = join(venvDir, "bin", "python");
-  const checkResult = spawnSync(venvPython, ["-c", "import mlx; import mlx_embedding_models; print('OK')"], {
-    encoding: "utf-8",
-    timeout: 15_000,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-
-  if (checkResult.status !== 0 || !checkResult.stdout?.includes("OK")) {
-    printError("MLX import verification failed");
-    return { success: false, error: "MLX import failed" };
+  const modelDir = await downloadModel(mlxDir, cdnModelId);
+  if (!modelDir) {
+    return { success: false, error: "Failed to download model" };
   }
-  printOK("MLX проверен — Metal GPU доступен");
 
   console.error("");
-  printOK(`Модель: ${model.name} (${model.id})`);
-  printOK(`Сервер: http://127.0.0.1:${MLX_PORT}/v1/embeddings`);
-  printInfo("MLX сервер запустится автоматически при индексации");
+  printOK(`Модель: ${model.name} (${cdnModelId})`);
+  printOK(`Metal GPU inference — без Python, без Docker`);
+  printOK(`Модель: ${modelDir}`);
+  printInfo("MLX загрузится автоматически при индексации");
 
   return {
     success: true,
     config: {
-      provider: "mlx",
-      model: model.id,
-      url: `http://127.0.0.1:${MLX_PORT}`,
+      provider: "mlx-native",
+      model: cdnModelId,
+      modelDir,
       dimensions: model.dimensions,
     },
   };
