@@ -321,8 +321,40 @@ static int win_stdio_main(int argc, char **argv, const CommArgs *args) {
 
 #ifndef _WIN32
 
+// Find bun or node runtime by checking well-known paths.
+// Returns absolute path to runtime, or "bun"/"node" for PATH fallback.
+static const char* unix_find_runtime(char *buf, size_t buf_size) {
+    const char *home = getenv("HOME");
+
+    // Check bun at well-known locations
+    if (home) {
+        snprintf(buf, buf_size, "%s/.bun/bin/bun", home);
+        if (access(buf, X_OK) == 0) return buf;
+    }
+    if (access("/usr/local/bin/bun", X_OK) == 0) return "/usr/local/bin/bun";
+    if (access("/opt/homebrew/bin/bun", X_OK) == 0) return "/opt/homebrew/bin/bun";
+
+    // Check node at well-known locations
+    if (home) {
+        // nvm — find latest installed version
+        char nvm_dir[2048];
+        snprintf(nvm_dir, sizeof(nvm_dir), "%s/.nvm/versions/node", home);
+        if (access(nvm_dir, F_OK) == 0) {
+            // Use the default alias or latest directory
+            snprintf(buf, buf_size, "%s/.nvm/alias/default", home);
+            // Simplified: just check if node exists via common nvm path
+        }
+    }
+    if (access("/usr/local/bin/node", X_OK) == 0) return "/usr/local/bin/node";
+    if (access("/opt/homebrew/bin/node", X_OK) == 0) return "/opt/homebrew/bin/node";
+    if (access("/usr/bin/node", X_OK) == 0) return "/usr/bin/node";
+
+    // Last resort: rely on PATH
+    return "bun";
+}
+
 static int unix_stdio_main(int argc, char **argv, const CommArgs *args) {
-    char exe_path[2048], core_path[2200];
+    char exe_path[2048], core_path[2200], runtime_buf[2048];
     get_exe_dir(exe_path, sizeof(exe_path));
     snprintf(core_path, sizeof(core_path), "%s/index.js", exe_path);
 
@@ -330,6 +362,9 @@ static int unix_stdio_main(int argc, char **argv, const CommArgs *args) {
         fprintf(stderr, "Comm: core not found: %s\n", core_path);
         return 1;
     }
+
+    const char *runtime = unix_find_runtime(runtime_buf, sizeof(runtime_buf));
+    fprintf(stderr, "Comm: using runtime: %s\n", runtime);
 
     int stdin_pipe[2], stdout_pipe[2];
     if (pipe(stdin_pipe) < 0 || pipe(stdout_pipe) < 0) return 1;
@@ -350,7 +385,7 @@ static int unix_stdio_main(int argc, char **argv, const CommArgs *args) {
         }
 
         char **new_argv = malloc((arg_count + 3) * sizeof(char*));
-        new_argv[0] = "bun";
+        new_argv[0] = (char*)runtime;
         new_argv[1] = core_path;
         int j = 2;
         for (int i = 1; i < argc; i++) {
@@ -358,9 +393,12 @@ static int unix_stdio_main(int argc, char **argv, const CommArgs *args) {
         }
         new_argv[j] = NULL;
 
+        execv(runtime, new_argv);
+        // If runtime was absolute and failed, try PATH fallback
         execvp("bun", new_argv);
         new_argv[0] = "node";
         execvp("node", new_argv);
+        fprintf(stderr, "Comm: failed to exec runtime\n");
         _exit(1);
     }
 
