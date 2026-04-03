@@ -32,7 +32,7 @@ function buildCandidates(): DetectionCandidate[] {
     list.push({
       provider: "mlx",
       model: "multilingual-e5-small",
-      url: "native://mlx",  // Not HTTP — native FFI
+      url: "native://mlx", // Not HTTP — native FFI
       label: "MLX Native",
     });
   }
@@ -85,6 +85,12 @@ function buildCandidates(): DetectionCandidate[] {
 async function detectAvailableProvider(): Promise<{ provider: ProviderKind; model: string }> {
   for (const candidate of buildCandidates()) {
     try {
+      // Native providers (MLX) don't need HTTP health check — already validated in buildCandidates
+      if (!candidate.url.startsWith("http")) {
+        log.i("FACTORY", `Auto-detected: ${candidate.label}, model=${candidate.model}`);
+        return { provider: candidate.provider, model: candidate.model };
+      }
+
       const res = await fetch(candidate.url, { method: "GET", signal: AbortSignal.timeout(2000) });
       if (!res.ok) continue;
 
@@ -350,10 +356,20 @@ const builders = new Map<string, BuilderFn>([
   [
     "mlx",
     (model, opts) => {
-      // Resolve model directory: config → default location
+      // Resolve model directory: config → default location → legacy ~/.ultracode/
       const { getDataDir } = require("../../utils/config-paths.js");
       const { join } = require("node:path");
-      const modelDir = opts.mlx?.modelDir || join(getDataDir(), "mlx", "models", model, "model_gpu_mlx");
+      const { existsSync } = require("node:fs");
+      const { homedir } = require("node:os");
+      const primaryDir = join(getDataDir(), "mlx", "models", model, "model_gpu_mlx");
+      const legacyDir = join(homedir(), ".ultracode", "models", model, "model_gpu_mlx");
+      const modelsDir = join(getDataDir(), "models", model, "model_gpu_mlx");
+      const modelDir =
+        opts.mlx?.modelDir ||
+        (existsSync(join(primaryDir, "model.safetensors")) ? primaryDir : null) ||
+        (existsSync(join(modelsDir, "model.safetensors")) ? modelsDir : null) ||
+        (existsSync(join(legacyDir, "model.safetensors")) ? legacyDir : null) ||
+        primaryDir;
       log.i("FACTORY", "Creating MLX native provider", { model, modelDir });
       return new MlxProvider({
         model,

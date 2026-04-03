@@ -19,18 +19,19 @@ export interface MlxProviderOptions {
 }
 
 // Tokenizer interface (subset of @lenml/tokenizers PreTrainedTokenizer)
-interface LenmlTokenizer {
-  (texts: string | string[], opts: {
+type LenmlTokenizer = (
+  texts: string | string[],
+  opts: {
     padding: boolean;
     truncation: boolean;
     max_length: number;
     return_tensor: false;
-  }): {
-    input_ids: number[][];
-    attention_mask: number[][];
-    token_type_ids?: number[][] | undefined;
-  };
-}
+  },
+) => {
+  input_ids: number[][];
+  attention_mask: number[][];
+  token_type_ids?: number[][] | undefined;
+};
 
 // Cache for tokenizer JSON to avoid re-fetching
 const tokenizerJsonCache = new Map<string, { json: object; config: object }>();
@@ -47,8 +48,8 @@ export class MlxProvider implements EmbeddingProvider {
   constructor(opts: MlxProviderOptions) {
     this.log = opts.logger;
     this.modelDir = opts.modelDir;
-    this.maxBatchSize = opts.maxBatchSize ?? 64;
-    this.maxSeqLen = opts.maxSeqLen ?? 512;
+    this.maxBatchSize = opts.maxBatchSize ?? 128;
+    this.maxSeqLen = opts.maxSeqLen ?? 256;
 
     this.info = {
       name: "mlx",
@@ -92,60 +93,85 @@ export class MlxProvider implements EmbeddingProvider {
     return results[0]!;
   }
 
+  // Pre-allocated buffers for inference (reused across batches, like Zig ring buffer)
+  private bufInputIds: Int32Array | null = null;
+  private bufAttentionMask: Int32Array | null = null;
+  private bufCapacity = 0;
+
+  private ensureBuffers(flatSize: number): { inputIds: Int32Array; attentionMask: Int32Array } {
+    if (this.bufCapacity < flatSize) {
+      // Grow with 2x headroom to avoid frequent reallocation
+      const cap = Math.max(flatSize, this.bufCapacity * 2, 8192);
+      this.bufInputIds = new Int32Array(cap);
+      this.bufAttentionMask = new Int32Array(cap);
+      this.bufCapacity = cap;
+    }
+    return { inputIds: this.bufInputIds!, attentionMask: this.bufAttentionMask! };
+  }
+
   async embedBatch(texts: string[], _opts?: EmbedOptions): Promise<Float32Array[]> {
     if (!this.initialized) await this.initialize();
     if (!this.tokenizer) throw new Error("MLX: tokenizer not loaded");
 
-    const results: Float32Array[] = [];
-
-    // Process in batches
-    for (let i = 0; i < texts.length; i += this.maxBatchSize) {
-      const batch = texts.slice(i, i + this.maxBatchSize);
-      const batchResults = this.inferBatch(batch);
-      results.push(...batchResults);
-    }
-
-    return results;
-  }
-
-  private inferBatch(texts: string[]): Float32Array[] {
-    if (!this.tokenizer) throw new Error("MLX: tokenizer not loaded");
-
-    // Tokenize
-    const encoded = this.tokenizer(texts, {
-      padding: true,
+    // Batch tokenize all texts at once (no padding — we pad per-bucket below)
+    const enc = this.tokenizer(texts, {
+      padding: false,
       truncation: true,
       max_length: this.maxSeqLen,
       return_tensor: false,
     });
 
-    const batchSize = texts.length;
-    const firstRow = encoded.input_ids[0];
-    if (!firstRow) throw new Error("MLX: tokenization returned empty result");
-    const seqLen = firstRow.length;
-
-    // Flatten to Int32Array
-    const inputIds = new Int32Array(batchSize * seqLen);
-    const attentionMask = new Int32Array(batchSize * seqLen);
-
-    for (let b = 0; b < batchSize; b++) {
-      const ids = encoded.input_ids[b]!;
-      const mask = encoded.attention_mask[b]!;
-      for (let s = 0; s < seqLen; s++) {
-        inputIds[b * seqLen + s] = ids[s]!;
-        attentionMask[b * seqLen + s] = mask[s]!;
-      }
+    // Build sorted index by token length (Zig BucketQueue style)
+    const n = texts.length;
+    const lengths = new Uint16Array(n);
+    const indices = new Uint32Array(n);
+    for (let i = 0; i < n; i++) {
+      lengths[i] = enc.input_ids[i]!.length;
+      indices[i] = i;
     }
+    // Sort indices by token length (ascending — short texts together)
+    indices.sort((a, b) => lengths[a]! - lengths[b]!);
 
-    // Run MLX inference
-    const output = mlxNative.embed(inputIds, attentionMask, batchSize, seqLen);
-    if (!output) throw new Error("MLX: inference failed");
-
-    // Split output into per-text embeddings
+    // Process in batches with dynamic padding
     const dim = mlxNative.getDimension() || this.info.dimension || 384;
-    const results: Float32Array[] = [];
-    for (let b = 0; b < batchSize; b++) {
-      results.push(new Float32Array(output.buffer, b * dim * 4, dim));
+    const results = new Array<Float32Array>(n);
+
+    for (let i = 0; i < n; i += this.maxBatchSize) {
+      const end = Math.min(i + this.maxBatchSize, n);
+      const batchSize = end - i;
+
+      // Dynamic padding: pad to longest in THIS batch (sorted → last is longest)
+      const seqLen = lengths[indices[end - 1]!]!;
+      const flatSize = batchSize * seqLen;
+
+      // Reuse pre-allocated buffers
+      const bufs = this.ensureBuffers(flatSize);
+      bufs.inputIds.fill(0, 0, flatSize);
+      bufs.attentionMask.fill(0, 0, flatSize);
+
+      for (let b = 0; b < batchSize; b++) {
+        const origIdx = indices[i + b]!;
+        const ids = enc.input_ids[origIdx]!;
+        const mask = enc.attention_mask[origIdx]!;
+        const offset = b * seqLen;
+        const copyLen = ids.length; // always <= seqLen (sorted)
+        for (let s = 0; s < copyLen; s++) {
+          bufs.inputIds[offset + s] = ids[s]!;
+          bufs.attentionMask[offset + s] = mask[s]!;
+        }
+      }
+
+      // MLX inference — pass subarray view (no copy)
+      const idsSlice = new Int32Array(bufs.inputIds.buffer, 0, flatSize);
+      const maskSlice = new Int32Array(bufs.attentionMask.buffer, 0, flatSize);
+      const output = mlxNative.embed(idsSlice, maskSlice, batchSize, seqLen);
+      if (!output) throw new Error("MLX: inference failed");
+
+      // Copy results directly to output array (correct order)
+      for (let b = 0; b < batchSize; b++) {
+        const origIdx = indices[i + b]!;
+        results[origIdx] = new Float32Array(output.buffer.slice(b * dim * 4, (b + 1) * dim * 4));
+      }
     }
 
     return results;
@@ -200,10 +226,11 @@ export class MlxProvider implements EmbeddingProvider {
       ]);
 
       if (!jsonResp.ok) throw new Error(`Failed to download tokenizer.json for ${hfRepo}: ${jsonResp.status}`);
-      if (!configResp.ok) throw new Error(`Failed to download tokenizer_config.json for ${hfRepo}: ${configResp.status}`);
+      if (!configResp.ok)
+        throw new Error(`Failed to download tokenizer_config.json for ${hfRepo}: ${configResp.status}`);
 
-      tokenizerJson = await jsonResp.json() as object;
-      tokenizerConfig = await configResp.json() as object;
+      tokenizerJson = (await jsonResp.json()) as object;
+      tokenizerConfig = (await configResp.json()) as object;
       tokenizerJsonCache.set(hfRepo, { json: tokenizerJson, config: tokenizerConfig });
     }
 

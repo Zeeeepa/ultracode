@@ -56,7 +56,9 @@ async function logBunStderr(stderr: ReadableStream<Uint8Array>, language: string
  */
 export async function spawnBunProcess(workerId: number, state: SubprocessState, context: SpawnContext): Promise<void> {
   const global = globalThis as any;
-  const bunProc = global.Bun?.["spawn"](["bun", context.workerScript], {
+  // Use process.execPath to find the current bun binary (avoids PATH issues in MCP/IDE environments)
+  const bunExe = process.execPath || "bun";
+  const bunProc = global.Bun?.["spawn"]([bunExe, context.workerScript], {
     stderr: "pipe",
     env: {
       ...process.env,

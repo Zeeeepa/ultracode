@@ -123,7 +123,7 @@ function getSemanticAgentConfig() {
     maxConcurrency: config.semanticAgent?.maxConcurrency ?? 5,
     memoryLimit: config.semanticAgent?.memoryLimit ?? 240,
     priority: config.semanticAgent?.priority ?? 8,
-    batchSize: config.semanticAgent?.batchSize ?? 8,
+    batchSize: config.semanticAgent?.batchSize ?? 200,
     queueBatchSize: config.semanticAgent?.queueBatchSize ?? 100,
     modelPath: config.semanticAgent?.modelPath ?? "./models",
   };

@@ -139,8 +139,8 @@ export function loadModel(config: MlxNativeConfig): boolean {
       },
     });
 
-    const maxBatch = config.maxBatch ?? 64;
-    const maxSeq = config.maxSeq ?? 512;
+    const maxBatch = config.maxBatch ?? 256;
+    const maxSeq = config.maxSeq ?? 256;
     const hiddenDim = config.hiddenDim ?? 384;
 
     const modelDirBuf = Buffer.from(config.modelDir + "\0", "utf-8");

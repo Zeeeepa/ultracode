@@ -79,26 +79,35 @@ async function loadCuda(): Promise<boolean> {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
 
-  // Try to load CUDA addon from multiple locations
-  const plat = process.platform === "win32" ? "win32" : "linux";
-  const possiblePaths = [
-    // Canonical location (build-cuda.ps1 copies here)
-    join(process.cwd(), "external-libs/cuda-" + plat + "-x64/ultracode_cuda.node"),
-    // When running from dist/ (relative to worker script)
-    join(
-      dirname(import.meta.url.replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")),
-      "../../../external-libs/cuda-" + plat + "-x64/ultracode_cuda.node",
-    ),
-    // Fallback: dist/ and build/ locations
-    join(process.cwd(), "dist/native/cuda/ultracode_cuda.node"),
-    join(process.cwd(), "build/Release/ultracode_cuda.node"),
-  ];
+  const workerDir = dirname(import.meta.url.replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1"));
+
+  // Build search paths based on platform
+  const possiblePaths: string[] = [];
+
+  if (process.platform === "darwin") {
+    // macOS: search for FAISS-only addon (no CUDA on Mac)
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    possiblePaths.push(
+      join(process.cwd(), `external-libs/faiss-darwin-${arch}/ultracode_faiss.node`),
+      join(workerDir, `../../../external-libs/faiss-darwin-${arch}/ultracode_faiss.node`),
+      join(process.cwd(), "dist/native/faiss/ultracode_faiss.node"),
+    );
+  } else {
+    // Windows/Linux: search for CUDA addon (includes FAISS if compiled with ENABLE_FAISS_CPU)
+    const plat = process.platform === "win32" ? "win32" : "linux";
+    possiblePaths.push(
+      join(process.cwd(), `external-libs/cuda-${plat}-x64/ultracode_cuda.node`),
+      join(workerDir, `../../../external-libs/cuda-${plat}-x64/ultracode_cuda.node`),
+      join(process.cwd(), "dist/native/cuda/ultracode_cuda.node"),
+      join(process.cwd(), "build/Release/ultracode_cuda.node"),
+    );
+  }
 
   for (const addonPath of possiblePaths) {
     try {
       const normalizedPath = addonPath.replace(/^\/([A-Za-z]:)/, "$1");
       const exists = existsSync(normalizedPath);
-      log(`CUDA path check: ${normalizedPath} exists=${exists}`);
+      log(`Addon path check: ${normalizedPath} exists=${exists}`);
       if (!exists) continue;
 
       cudaAddon = require(normalizedPath);
@@ -116,20 +125,20 @@ async function loadCuda(): Promise<boolean> {
 
         return true;
       } else {
-        log(`CUDA loaded but no GPU devices found`);
-        // Still check for native FAISS (CPU-only mode)
+        log(`Addon loaded, no GPU devices (FAISS-only mode: ${!!cudaAddon!.hasNativeFaiss})`);
+        // FAISS-only mode (macOS) or CPU-only mode (no GPU)
         if (cudaAddon!.hasNativeFaiss) {
           nativeFaiss = cudaAddon as unknown as NativeFaissAddon;
-          log("Native FAISS available (CPU mode, no GPU)");
+          log("Native FAISS available (CPU mode)");
           return true;
         }
       }
     } catch (error) {
-      log(`CUDA load error at ${addonPath}: ${(error as Error).message}`);
+      log(`Addon load error at ${addonPath}: ${(error as Error).message}`);
     }
   }
 
-  log("CUDA addon not found or no GPU available");
+  log("No native addon found (CUDA/FAISS)");
   return false;
 }
 

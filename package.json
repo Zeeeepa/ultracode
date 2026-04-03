@@ -93,6 +93,8 @@
     "build:faiss:docker": "pwsh scripts/build-faiss-docker.ps1",
     "build:faiss:docker:clean": "pwsh scripts/build-faiss-docker.ps1 -Clean",
     "build:faiss:macos": "bash scripts/build-faiss-macos.sh",
+    "build:faiss:cpu": "bash scripts/build-faiss-cpu.sh",
+    "build:faiss:cpu:force": "bash scripts/build-faiss-cpu.sh --force",
     "build:roslyn": "pwsh scripts/build-roslyn.ps1",
     "build:roslyn:force": "pwsh scripts/build-roslyn.ps1 -Force",
     "build:roslyn:clean": "pwsh scripts/build-roslyn.ps1 -Clean",

@@ -16,6 +16,6 @@ Module for graph functionality.
 
 ## Files
 
-- `basin-index.ts`
 - `bloom-reach.ts`
+- `basin-index.ts`
 

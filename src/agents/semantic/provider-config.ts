@@ -158,21 +158,25 @@ export function getModelNameFromSemanticConfig(semanticConfig: SemanticConfig | 
     return "all-MiniLM-L6-v2"; // default for auto-detection
   }
 
+  // setup_embedding writes model name to embedding.model (top-level)
+  const topLevelModel = (semanticConfig.embedding as Record<string, unknown>)?.["model"] as string | undefined;
   const platform = semanticConfig.embedding?.platform;
   switch (platform) {
     case "ovms":
     case "ovms-native":
-      return semanticConfig.embedding?.ovms?.selected_model || "all-MiniLM-L6-v2";
+      return semanticConfig.embedding?.ovms?.selected_model || topLevelModel || "all-MiniLM-L6-v2";
     case "vllm":
-      return semanticConfig.embedding?.vllm?.selected_model || "intfloat/multilingual-e5-large-instruct";
+      return (
+        semanticConfig.embedding?.vllm?.selected_model || topLevelModel || "intfloat/multilingual-e5-large-instruct"
+      );
     case "llamacpp":
-      return semanticConfig.embedding?.llamacpp?.selected_model || "multilingual-e5-base";
+      return semanticConfig.embedding?.llamacpp?.selected_model || topLevelModel || "multilingual-e5-base";
     case "mlx":
-      return semanticConfig.embedding?.mlx?.selected_model || "intfloat/multilingual-e5-base";
+      return semanticConfig.embedding?.mlx?.selected_model || topLevelModel || "multilingual-e5-small";
     case "tei":
-      return semanticConfig.embedding?.tei?.selected_model || "BAAI/bge-m3";
+      return semanticConfig.embedding?.tei?.selected_model || topLevelModel || "BAAI/bge-m3";
     default:
-      return "all-MiniLM-L6-v2";
+      return topLevelModel || "all-MiniLM-L6-v2";
   }
 }
 

@@ -217,6 +217,26 @@ export default defineConfig([
         console.log("[tsup] CUDA addon not found (optional — run scripts/build-cuda.ps1 to build)");
       }
 
+      // Copy FAISS CPU addon from external-libs/ to dist/native/faiss/ (macOS)
+      if (process.platform === "darwin") {
+        const arch = process.arch === "arm64" ? "arm64" : "x64";
+        const faissSrc = resolve("external-libs", `faiss-darwin-${arch}`);
+        const faissNode = join(faissSrc, "ultracode_faiss.node");
+        const faissDst = join("dist", "native", "faiss");
+
+        if (existsSync(faissNode)) {
+          try {
+            await mkdir(faissDst, { recursive: true });
+            await copyFile(faissNode, join(faissDst, "ultracode_faiss.node"));
+            console.log("[tsup] Copied FAISS CPU addon to dist/native/faiss/");
+          } catch (e: any) {
+            console.warn("[tsup] FAISS addon copy warning:", e.message);
+          }
+        } else {
+          console.log("[tsup] FAISS CPU addon not found — run: ./scripts/build-faiss-cpu.sh");
+        }
+      }
+
       // Copy Roslyn addon if available (built by scripts/build-roslyn)
       const addonDst = join("dist", "roslyn-addon");
       const addonDll = join(addonDst, "UltraCode.CSharp.dll");

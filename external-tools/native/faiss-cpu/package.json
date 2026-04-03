@@ -1,0 +1,15 @@
+{
+  "name": "ultracode-faiss-cpu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FAISS CPU native addon for ultracode (macOS/Linux, no CUDA)",
+  "scripts": {
+    "build": "cmake-js compile --CDENABLE_FAISS_CPU=ON",
+    "rebuild": "cmake-js rebuild --CDENABLE_FAISS_CPU=ON",
+    "clean": "cmake-js clean"
+  },
+  "dependencies": {
+    "cmake-js": "^7.3.0",
+    "node-addon-api": "^8.3.1"
+  }
+}

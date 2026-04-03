@@ -68,6 +68,7 @@ Each installer catches and reports errors at each stage (download, extraction, s
 
 ## Exports
 
+- `installMLX`
 - `installOllama`
 - `installOVMSNative`
 - `installTEI`

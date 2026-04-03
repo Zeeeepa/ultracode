@@ -377,17 +377,42 @@ class GpuSubprocessClient implements IGpuClient {
   private setupStdoutReader(): void {
     if (!this.worker?.stdout) return;
 
-    this.worker.stdout.on("data", (data: Buffer) => {
-      this.responseBuffer += data.toString();
-      this.processResponseBuffer();
-    });
+    const stdout = this.worker.stdout as any;
 
-    this.worker.stdout.on("error", (error: Error) => {
-      if (!this.isShuttingDown) {
-        log.e("GPU", "stdout read error", { error: error.message });
-        this.handleWorkerCrash();
-      }
-    });
+    // Bun.spawn returns ReadableStream (no .on method), Node returns Readable (has .on)
+    if (typeof stdout.on === "function") {
+      // Node.js ChildProcess stdout
+      stdout.on("data", (data: Buffer) => {
+        this.responseBuffer += data.toString();
+        this.processResponseBuffer();
+      });
+
+      stdout.on("error", (error: Error) => {
+        if (!this.isShuttingDown) {
+          log.e("GPU", "stdout read error", { error: error.message });
+          this.handleWorkerCrash();
+        }
+      });
+    } else if (typeof stdout.getReader === "function") {
+      // Bun ReadableStream
+      const reader = (stdout as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      const readLoop = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            this.responseBuffer += decoder.decode(value, { stream: true });
+            this.processResponseBuffer();
+          }
+        } catch {
+          if (!this.isShuttingDown) {
+            this.handleWorkerCrash();
+          }
+        }
+      };
+      readLoop();
+    }
 
     this.worker.on("exit", (code: number | null) => {
       if (!this.isShuttingDown) {

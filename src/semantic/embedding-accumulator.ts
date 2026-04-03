@@ -97,6 +97,16 @@ export class EmbeddingAccumulator {
   // Async flush state - track in-flight flush operation (only 1 concurrent flush to FAISS)
   private inFlightFlush: Promise<number> | null = null;
   // Sync flush guard - prevents concurrent flush() calls from duplicating work
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Embedding dedup cache (like Zig's batch_dedup + global_embed_cache)
+  // Caches text_hash → Float32Array across batches. Avoids re-embedding
+  // identical texts (common in codebases: repeated type names, imports, etc.)
+  // ═══════════════════════════════════════════════════════════════════════
+  private static readonly EMBED_CACHE_MAX = 50_000;
+  private static readonly MIN_TEXT_LENGTH = 8; // Skip trivial texts (Zig: 10 chars)
+  private embedCache = new Map<number, Float32Array>();
+  private dedupStats = { cacheHits: 0, dedupHits: 0, trivialSkipped: 0, totalTexts: 0 };
   private syncFlushPromise: Promise<unknown> | null = null;
 
   // Debounce for accumulating texts before processing
@@ -370,10 +380,25 @@ export class EmbeddingAccumulator {
    * Process a single batch and return results.
    * Used for parallel batch processing.
    */
+  /**
+   * Fast text hash (FNV-1a 32-bit). Same text → same hash.
+   * Used for content-level dedup and embedding cache.
+   */
+  private static textHash(text: string): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+  }
+
   private async processSingleBatch(
     batch: EmbeddingTextItem[],
   ): Promise<{ embeddings: VectorEmbedding[]; count: number } | null> {
-    // Filter out texts that already have embeddings in FAISS
+    this.dedupStats.totalTexts += batch.length;
+
+    // ── Step 1: Filter out texts already in FAISS ──────────────────────
     let filteredBatch = batch;
     if (this.vectorProvider) {
       const ids = batch.map((t) => t.id);
@@ -381,62 +406,127 @@ export class EmbeddingAccumulator {
       if (existingIds.size > 0) {
         filteredBatch = batch.filter((t) => !existingIds.has(t.id));
         if (filteredBatch.length === 0) {
-          return null; // All texts already have embeddings
+          return null;
         }
       }
     }
 
-    // Sort batch by text length DESCENDING (longest first) - better GPU in llama.cpp
-    const sortedBatch = filteredBatch
-      .map((t, idx) => ({ item: t, idx, len: t.text.length }))
-      .sort((a, b) => b.len - a.len);
+    // ── Step 2: Trivial text filtering (Zig: skip <10 chars) ──────────
+    const minLen = EmbeddingAccumulator.MIN_TEXT_LENGTH;
+    const beforeTrivial = filteredBatch.length;
+    filteredBatch = filteredBatch.filter((t) => t.text.length >= minLen);
+    this.dedupStats.trivialSkipped += beforeTrivial - filteredBatch.length;
+    if (filteredBatch.length === 0) return null;
 
-    // Truncate texts to ~512 tokens (e5 model limit) ≈ 2000 chars
+    // ── Step 3: Content-level dedup + cache lookup ────────────────────
+    // Same text with different entity IDs → embed once, reuse vector.
+    // Also check cross-batch embedding cache (text_hash → Float32Array).
     const MAX_TEXT_CHARS = 2000;
-    const textStrings = sortedBatch.map((s) =>
-      s.item.text.length > MAX_TEXT_CHARS ? s.item.text.slice(0, MAX_TEXT_CHARS) : s.item.text,
-    );
+    const toEmbed: { item: EmbeddingTextItem; hash: number; truncated: string }[] = [];
+    const cachedResults: VectorEmbedding[] = [];
+    const seenHashes = new Map<number, number>(); // hash → index in toEmbed
 
-    // Generate embeddings for sorted batch
-    const batchStart = performance.now();
-    const embeddings = await this.embeddingGenerator!.generateBatch(textStrings);
-    const batchMs = performance.now() - batchStart;
-    this.embeddingStats.teiTotalGenTimeMs += batchMs;
-    this.embeddingStats.teiTotalGenCount += textStrings.length;
-    if (batchMs > this.embeddingStats.teiMaxBatchMs) this.embeddingStats.teiMaxBatchMs = batchMs;
-    this.embeddingStats.teiBatchLog.push({ n: textStrings.length, ms: Math.round(batchMs) });
+    for (const item of filteredBatch) {
+      const truncated = item.text.length > MAX_TEXT_CHARS ? item.text.slice(0, MAX_TEXT_CHARS) : item.text;
+      const hash = EmbeddingAccumulator.textHash(truncated);
 
-    // Dump batch data to disk for latency analysis (enable via log-config.json: teiBatchDump=true)
-    if (isTeiBatchDumpEnabled()) {
-      this.dumpBatchToDisk(filteredBatch, textStrings, sortedBatch, batchMs);
-    }
-
-    // Restore original order for correct id mapping
-    const reorderedEmbeddings: Float32Array[] = Array.from({ length: filteredBatch.length }, () => new Float32Array(0));
-    for (let i = 0; i < sortedBatch.length; i++) {
-      reorderedEmbeddings[sortedBatch[i]!.idx] = embeddings[i]!;
-    }
-
-    // Convert to VectorEmbedding format
-    const results: VectorEmbedding[] = [];
-    for (let i = 0; i < filteredBatch.length && i < reorderedEmbeddings.length; i++) {
-      const text = filteredBatch[i]!;
-      const vector = reorderedEmbeddings[i];
-
-      if (!vector || vector.length !== this.config.dimensions) {
+      // Check cross-batch cache first
+      const cached = this.embedCache.get(hash);
+      if (cached) {
+        this.dedupStats.cacheHits++;
+        cachedResults.push({
+          id: item.id,
+          vector: cached,
+          content: item.text.slice(0, 500),
+          metadata: item.metadata,
+          createdAt: Date.now(),
+        });
         continue;
       }
 
+      // In-batch dedup: same text seen earlier in this batch
+      const seenIdx = seenHashes.get(hash);
+      if (seenIdx !== undefined) {
+        this.dedupStats.dedupHits++;
+        // Will copy vector from the first occurrence after generation
+        toEmbed.push({ item, hash, truncated });
+        continue;
+      }
+
+      seenHashes.set(hash, toEmbed.length);
+      toEmbed.push({ item, hash, truncated });
+    }
+
+    if (toEmbed.length === 0) {
+      // All from cache
+      return cachedResults.length > 0 ? { embeddings: cachedResults, count: cachedResults.length } : null;
+    }
+
+    // ── Step 4: Deduplicate texts for provider call ───────────────────
+    // Only send unique texts to the provider
+    const uniqueTexts: string[] = [];
+    const uniqueHashes: number[] = [];
+    const hashToUniqueIdx = new Map<number, number>();
+
+    for (const entry of toEmbed) {
+      if (!hashToUniqueIdx.has(entry.hash)) {
+        hashToUniqueIdx.set(entry.hash, uniqueTexts.length);
+        uniqueTexts.push(entry.truncated);
+        uniqueHashes.push(entry.hash);
+      }
+    }
+
+    // ── Step 5: Generate embeddings (only unique texts) ───────────────
+    const batchStart = performance.now();
+    const embeddings = await this.embeddingGenerator!.generateBatch(uniqueTexts);
+    const batchMs = performance.now() - batchStart;
+    this.embeddingStats.teiTotalGenTimeMs += batchMs;
+    this.embeddingStats.teiTotalGenCount += uniqueTexts.length;
+    if (batchMs > this.embeddingStats.teiMaxBatchMs) this.embeddingStats.teiMaxBatchMs = batchMs;
+    this.embeddingStats.teiBatchLog.push({ n: uniqueTexts.length, ms: Math.round(batchMs) });
+
+    if (isTeiBatchDumpEnabled()) {
+      const sortedBatch = toEmbed.map((e, idx) => ({ item: e.item, idx, len: e.truncated.length }));
+      this.dumpBatchToDisk(filteredBatch, uniqueTexts, sortedBatch, batchMs);
+    }
+
+    // ── Step 6: Populate cache with new embeddings ────────────────────
+    for (let i = 0; i < uniqueHashes.length; i++) {
+      const vec = embeddings[i];
+      if (vec && vec.length === this.config.dimensions) {
+        this.embedCache.set(uniqueHashes[i]!, vec);
+      }
+    }
+
+    // Evict oldest entries if cache too large (simple truncation)
+    if (this.embedCache.size > EmbeddingAccumulator.EMBED_CACHE_MAX) {
+      const excess = this.embedCache.size - EmbeddingAccumulator.EMBED_CACHE_MAX;
+      const iter = this.embedCache.keys();
+      for (let i = 0; i < excess; i++) {
+        const key = iter.next().value;
+        if (key !== undefined) this.embedCache.delete(key);
+      }
+    }
+
+    // ── Step 7: Map results back to all items (deduped + unique) ──────
+    const results: VectorEmbedding[] = [...cachedResults];
+
+    for (const entry of toEmbed) {
+      const uniqueIdx = hashToUniqueIdx.get(entry.hash);
+      if (uniqueIdx === undefined) continue;
+      const vector = embeddings[uniqueIdx];
+      if (!vector || vector.length !== this.config.dimensions) continue;
+
       results.push({
-        id: text.id,
+        id: entry.item.id,
         vector,
-        content: text.text.slice(0, 500),
-        metadata: text.metadata,
+        content: entry.item.text.slice(0, 500),
+        metadata: entry.item.metadata,
         createdAt: Date.now(),
       });
     }
 
-    return { embeddings: results, count: embeddings.length };
+    return { embeddings: results, count: results.length };
   }
 
   /**
@@ -519,6 +609,20 @@ export class EmbeddingAccumulator {
         batches: this.embeddingStats.batchCount,
         pendingVectors: this.pending.length,
       });
+
+      // Log dedup/cache stats if significant
+      if (this.dedupStats.cacheHits > 0 || this.dedupStats.dedupHits > 0 || this.dedupStats.trivialSkipped > 0) {
+        const total = this.dedupStats.totalTexts;
+        const saved = this.dedupStats.cacheHits + this.dedupStats.dedupHits + this.dedupStats.trivialSkipped;
+        log.i("ACCUMULATOR", "dedup_stats", {
+          totalTexts: total,
+          cacheHits: this.dedupStats.cacheHits,
+          dedupHits: this.dedupStats.dedupHits,
+          trivialSkipped: this.dedupStats.trivialSkipped,
+          savedPct: total > 0 ? `${Math.round((saved / total) * 100)}%` : "0%",
+          cacheSize: this.embedCache.size,
+        });
+      }
     } finally {
       this.isProcessingQueue = false;
       this.queueProcessingPromise = null;
@@ -671,6 +775,8 @@ export class EmbeddingAccumulator {
       teiBatchLog: [],
     };
     this.batchDumpIndex = 0;
+    this.dedupStats = { cacheHits: 0, dedupHits: 0, trivialSkipped: 0, totalTexts: 0 };
+    // Keep embedCache across resets — it's valuable for incremental re-indexes
   }
 
   /**

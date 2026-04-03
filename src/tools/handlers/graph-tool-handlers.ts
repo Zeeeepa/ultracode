@@ -10,7 +10,7 @@
  */
 
 import { z } from "zod";
-import { resumeTimers, suspendTimers, waitForPostIndexing } from "../../core/indexing-state.js";
+import { resumeTimers, setIndexingState, suspendTimers, waitForPostIndexing } from "../../core/indexing-state.js";
 import { log } from "../../logging/index.js";
 
 import type { Entity, EntityType, Relationship } from "../../types/storage.js";
@@ -90,6 +90,9 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
           log.w("CLEANINDEX", "sem_reinit_fail", { err: err.message, stack: err.stack });
         }
       }
+
+      // Reset indexing state flag (may be stuck from interrupted indexing)
+      setIndexingState(false, targetDir);
 
       return {
         content: [
