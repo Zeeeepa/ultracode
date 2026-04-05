@@ -189,8 +189,8 @@ export class CheckoutCommitToolHandler extends BaseToolHandler<z.infer<typeof Ch
         commit: {
           hash: commit.commitHash,
           message: commit.message,
-          entityCount: commit.entityCount,
-          relationshipCount: commit.relationshipCount,
+          entityCount: 0,
+          relationshipCount: 0,
           createdAt: new Date(commit.createdAt).toISOString(),
           parentHash: commit.parentHash,
         },
@@ -254,8 +254,8 @@ export class ListCommitsToolHandler extends BaseToolHandler<z.infer<typeof ListC
                 commits: history.map((c) => ({
                   hash: c.commitHash,
                   message: c.message,
-                  entityCount: c.entityCount,
-                  relationshipCount: c.relationshipCount,
+                  entityCount: 0,
+                  relationshipCount: 0,
                   createdAt: new Date(c.createdAt).toISOString(),
                   parentHash: c.parentHash?.slice(0, 8) || null,
                 })),

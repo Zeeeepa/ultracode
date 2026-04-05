@@ -339,7 +339,7 @@ export function checkStaticCollectionLeak(entity: Entity, allEntities?: Entity[]
  */
 export function checkPiiInLogs(entity: Entity): CustomDetectorResult {
   // Cap text length to prevent regex engine stack overflow on large methods
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   // Match Log* calls with {@SomeObject} destructuring pattern
   const logDestructurePattern = /\bLog\w*\b[^;]{0,200}\{@\w+\}/;
   if (!logDestructurePattern.test(content)) return { match: false, confidence: 0 };
@@ -356,7 +356,7 @@ export function checkPiiInLogs(entity: Entity): CustomDetectorResult {
  */
 export function checkAsyncFireAndForget(entity: Entity): CustomDetectorResult {
   // Cap text length to prevent regex engine stack overflow on large methods
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   // Simplified: find lines with SomethingAsync( that are NOT preceded by await/var/assignment
   // Use line-by-line approach instead of complex lookaheads to avoid regex engine issues
   const lines = content.split("\n");
@@ -448,7 +448,7 @@ export function checkGrpcMissingDeadline(entity: Entity): CustomDetectorResult {
   if (grpcCalls.length === 0) return { match: false, confidence: 0 };
 
   // Check for deadline/timeout configuration
-  const content = (entity.embeddingText ?? "") as string;
+  const content = (entity.metadata?.["embeddingText"] ?? "") as string;
   const hasDeadline = /deadline|Deadline|CallOptions|timeout/i.test(content);
   if (hasDeadline) return { match: false, confidence: 0 };
 
@@ -522,7 +522,7 @@ export function checkAsyncLockWithAwait(entity: Entity): CustomDetectorResult {
   const cf = getCf(entity);
   if (!cf?.awaits?.length) return { match: false, confidence: 0 };
 
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   // Check for lock keyword or Monitor.Enter usage
   const hasLock = /\block\s*\(/.test(content) || /Monitor\.(Enter|TryEnter)/.test(content);
   if (!hasLock) return { match: false, confidence: 0 };
@@ -578,7 +578,7 @@ export function checkEfClientSideEval(entity: Entity): CustomDetectorResult {
   if (!hasDbRef) return { match: false, confidence: 0 };
 
   // Check line by line: materializer followed by LINQ on next chained line
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 4000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 4000);
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -611,8 +611,8 @@ export function checkEfSaveChangesNoTransaction(entity: Entity): CustomDetectorR
   );
   if (hasTransaction) return { match: false, confidence: 0 };
 
-  // Also check embeddingText for TransactionScope
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 4000);
+  // Also check code text for TransactionScope
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 4000);
   if (/TransactionScope|BeginTransaction/.test(content)) return { match: false, confidence: 0 };
 
   return {
@@ -652,8 +652,8 @@ export function checkExceptionFlowControl(entity: Entity): CustomDetectorResult 
   const cf = getCf(entity);
   if (!cf?.loops?.length || !cf?.exceptions?.length) return { match: false, confidence: 0 };
 
-  // Heuristic: if exceptions exist and there are loops, check embeddingText for pattern
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  // Heuristic: if exceptions exist and there are loops, check code text for pattern
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   // Look for try { inside a for/foreach/while
   const lines = content.split("\n");
   let inLoop = 0;
@@ -679,7 +679,7 @@ export function checkExceptionFlowControl(entity: Entity): CustomDetectorResult 
 
 /**
  * Event handler leak: += without corresponding -=
- * Pre-filters via calls metadata to avoid scanning all methods' embeddingText
+ * Pre-filters via calls metadata to avoid scanning all methods' code text
  */
 export function checkEventHandlerLeak(entity: Entity): CustomDetectorResult {
   // Pre-filter: check if entity has event-related patterns in calls or modifiers
@@ -690,9 +690,9 @@ export function checkEventHandlerLeak(entity: Entity): CustomDetectorResult {
     return n.startsWith("add_") || /^(Subscribe|AddHandler|Attach|Register)/.test(n);
   });
 
-  // Quick keyword pre-filter BEFORE reading full embeddingText
+  // Quick keyword pre-filter BEFORE reading full code text
   if (!hasEventCalls) {
-    const raw = (entity.embeddingText ?? "") as string;
+    const raw = (entity.metadata?.["embeddingText"] ?? "") as string;
     // Fast O(N) keyword checks — no regex on full text
     if (
       !raw.includes("+=") ||
@@ -702,7 +702,7 @@ export function checkEventHandlerLeak(entity: Entity): CustomDetectorResult {
     }
   }
 
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
 
   // Count event-like += (with EventHandler, delegate, method reference patterns)
   const lines = content.split("\n");
@@ -739,7 +739,7 @@ export function checkDictCheckThenAct(entity: Entity): CustomDetectorResult {
   if (!hasContainsKey || !hasAdd) return { match: false, confidence: 0 };
 
   // Verify pattern in code line-by-line (avoid multiline regex on Bun/JSC)
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 4000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 4000);
   const lines = content.split("\n");
   let containsKeyLine = -1;
   let found = false;
@@ -769,7 +769,7 @@ export function checkDictCheckThenAct(entity: Entity): CustomDetectorResult {
  * Captive dependency: Singleton consuming Scoped/Transient service
  */
 export function checkCaptiveDependency(entity: Entity): CustomDetectorResult {
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   // Check for AddSingleton registering a type that injects scoped services
   // Heuristic: file has AddSingleton AND the registered class/method takes IServiceProvider or has GetRequiredService
   const calls = (entity.metadata?.["calls"] ?? []) as Array<{ name?: string; target?: string }>;
@@ -807,7 +807,7 @@ export function checkLinqPrematureMaterialization(entity: Entity): CustomDetecto
   if (!hasLinq) return { match: false, confidence: 0 };
 
   // Line-by-line check for materialization before LINQ
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 4000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 4000);
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -842,7 +842,7 @@ export function checkEfRawSqlInjection(entity: Entity): CustomDetectorResult {
   const hasRawSql = calls.some((c) => /^(FromSqlRaw|ExecuteSqlRaw|ExecuteSqlRawAsync)$/.test(c.name ?? ""));
   if (!hasRawSql) return { match: false, confidence: 0 };
 
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   // Check for string concat/interpolation in FromSqlRaw call
   const hasConcatInSql =
     /FromSqlRaw\(\s*\$"/.test(content) ||
@@ -870,8 +870,8 @@ export function checkCatchRethrowOnly(entity: Entity): CustomDetectorResult {
   const uselessCatches = cf.exceptions.filter((e) => e.hasRethrow && !e.hasThrowEx && !e.isEmpty);
   if (uselessCatches.length === 0) return { match: false, confidence: 0 };
 
-  // Verify: check embeddingText that catch block really only has throw;
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  // Verify: check code text that catch block really only has throw;
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   const rethrowOnlyPattern = /catch\s*\([^)]*\)\s*\{\s*throw\s*;\s*\}/;
   if (!rethrowOnlyPattern.test(content)) return { match: false, confidence: 0 };
 
@@ -956,8 +956,8 @@ export function checkLargeTryBlock(entity: Entity): CustomDetectorResult {
   const cf = getCf(entity);
   if (!cf?.exceptions?.length) return { match: false, confidence: 0 };
 
-  // Heuristic: if entity LOC is high and has exceptions, check embeddingText
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  // Heuristic: if entity LOC is high and has exceptions, check code text
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   const lines = content.split("\n");
 
   // Find try blocks and count lines until matching catch
@@ -993,7 +993,7 @@ export function checkLargeTryBlock(entity: Entity): CustomDetectorResult {
 
 /**
  * Regex without timeout: new Regex() without RegexOptions containing timeout
- * Pre-filters via calls metadata to avoid scanning all methods' embeddingText
+ * Pre-filters via calls metadata to avoid scanning all methods' code text
  */
 export function checkRegexNoTimeout(entity: Entity): CustomDetectorResult {
   // Pre-filter: check if calls mention Regex-related patterns
@@ -1006,11 +1006,11 @@ export function checkRegexNoTimeout(entity: Entity): CustomDetectorResult {
 
   // If no regex calls in metadata, do a quick keyword check
   if (!hasRegexCall) {
-    const content = ((entity.embeddingText ?? "") as string).slice(0, 2000);
+    const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 2000);
     if (!content.includes("new Regex")) return { match: false, confidence: 0 };
   }
 
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 4000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 4000);
   // Count new Regex() line by line to avoid global regex on large text
   const lines = content.split("\n");
   let regexCount = 0;
@@ -1039,7 +1039,7 @@ export function checkHardcodedConnection(entity: Entity): CustomDetectorResult {
   const filePath = entity.filePath?.toLowerCase() ?? "";
   if (/appsettings|config|\.json|migration|seed/i.test(filePath)) return { match: false, confidence: 0 };
 
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 4000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 4000);
   // Quick keyword check before scanning lines
   const cl = content.toLowerCase();
   if (
@@ -1091,7 +1091,7 @@ export function checkDapperImplicitNvarchar(entity: Entity): CustomDetectorResul
   if (dapperCalls.length === 0) return { match: false, confidence: 0 };
 
   // Exclude if DynamicParameters/DbString/DbType is used anywhere
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   if (/DynamicParameters|DbString|DbType\.AnsiString|DbType\.AnsiStringFixedLength/.test(content)) {
     return { match: false, confidence: 0 };
   }
@@ -1128,7 +1128,7 @@ export function checkDapperImplicitNvarchar(entity: Entity): CustomDetectorResul
  * Should use QueryFirstOrDefault directly.
  */
 export function checkDapperQueryThenFirst(entity: Entity): CustomDetectorResult {
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
 
   // Line-by-line: find Query<T>(...) or QueryAsync<T>(...) followed by .First/.FirstOrDefault/.Single/.Last/.Take(1)
   const lines = content.split("\n");
@@ -1177,7 +1177,7 @@ export function checkDapperSqlInjection(entity: Entity): CustomDetectorResult {
   const dapperCalls = calls.filter((c) => DAPPER_METHODS_RE.test(c.name ?? ""));
   if (dapperCalls.length === 0) return { match: false, confidence: 0 };
 
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   const lines = content.split("\n");
   let found = false;
   const criteria: string[] = [];
@@ -1260,8 +1260,8 @@ export function checkDapperNPlusOne(entity: Entity): CustomDetectorResult {
   }
 
   if (matchedLoops === 0) {
-    // Fallback: check embeddingText line-by-line
-    const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+    // Fallback: check code text line-by-line
+    const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
     const lines = content.split("\n");
     let inLoop = 0;
     for (const line of lines) {
@@ -1303,7 +1303,7 @@ export function checkDapperNoCommandTimeout(entity: Entity): CustomDetectorResul
   if (!isHeavy) return { match: false, confidence: 0 };
 
   // Check if commandTimeout is specified
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   if (/commandTimeout/i.test(content)) return { match: false, confidence: 0 };
 
   return {
@@ -1334,7 +1334,7 @@ export function checkDapperBufferedLargeQuery(entity: Entity): CustomDetectorRes
   if (!isLargeResult) return { match: false, confidence: 0 };
 
   // Check if buffered: false is already specified
-  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const content = ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
   if (/buffered\s*:\s*false/i.test(content)) return { match: false, confidence: 0 };
   // Also skip if QueryUnbufferedAsync is used
   if (/QueryUnbuffered/i.test(content)) return { match: false, confidence: 0 };

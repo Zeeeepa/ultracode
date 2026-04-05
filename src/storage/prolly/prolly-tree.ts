@@ -77,6 +77,7 @@ export class ProllyTree {
       // Create empty root node
       const emptyLeaf = await this.nodeStore.put({
         type: "leaf",
+        level: 0,
         data: this.nodeStore.serializeLeafData({ entries: [] }),
         entryCount: 0,
       });
@@ -151,6 +152,7 @@ export class ProllyTree {
         const leafData: LeafNodeData = { entries: currentChunk };
         const hash = await this.nodeStore.put({
           type: "leaf",
+          level: 0,
           data: this.nodeStore.serializeLeafData(leafData),
           keyRangeStart: chunkKeyStart!,
           keyRangeEnd: entry.key,
@@ -171,6 +173,7 @@ export class ProllyTree {
         const leafData: LeafNodeData = { entries: currentChunk };
         const hash = await this.nodeStore.put({
           type: "leaf",
+          level: 0,
           data: this.nodeStore.serializeLeafData(leafData),
           keyRangeStart: chunkKeyStart!,
           keyRangeEnd: entry.key,
@@ -221,6 +224,7 @@ export class ProllyTree {
         // Create internal node
         const hash = await this.nodeStore.put({
           type: "internal",
+          level: 1,
           childrenHashes: currentChildren.map((c) => c.hash),
           keyRangeStart: groupKeyStart!,
           keyRangeEnd: child.keyEnd,

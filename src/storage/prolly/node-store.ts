@@ -76,20 +76,17 @@ export class ProllyNodeStore {
   private async createTable(): Promise<void> {
     if (!this.client) throw new Error("Client not initialized");
 
+    // Zig-compatible schema: id/level/keys/values/children/hash
     await this.client.batch(
       [
         `CREATE TABLE IF NOT EXISTS prolly_nodes (
-          content_hash TEXT PRIMARY KEY,
-          node_type TEXT NOT NULL,
-          data BLOB,
-          children_hashes TEXT,
-          key_range_start TEXT,
-          key_range_end TEXT,
-          entry_count INTEGER DEFAULT 0,
-          created_at INTEGER NOT NULL
+          id TEXT NOT NULL PRIMARY KEY,
+          level INTEGER DEFAULT 0,
+          "keys" BLOB,
+          "values" BLOB,
+          children BLOB,
+          hash TEXT DEFAULT ''
         )`,
-        `CREATE INDEX IF NOT EXISTS idx_prolly_type ON prolly_nodes(node_type)`,
-        `CREATE INDEX IF NOT EXISTS idx_prolly_created ON prolly_nodes(created_at)`,
       ],
       "write",
     );
@@ -98,7 +95,7 @@ export class ProllyNodeStore {
   /**
    * Compute content hash for a node
    */
-  computeHash(node: Omit<ProllyNode, "contentHash" | "createdAt">): string {
+  computeHash(node: Omit<ProllyNode, "contentHash" | "hash">): string {
     if (!this.xxhashInstance) {
       throw new Error("xxHash not initialized");
     }
@@ -107,18 +104,13 @@ export class ProllyNodeStore {
     const parts: string[] = [node.type];
 
     if (node.data) {
-      // Hash the binary data - convert to string first
       const dataStr = Buffer.from(node.data).toString("base64");
       parts.push(this.xxhashInstance.h64ToString(dataStr));
     }
 
     if (node.childrenHashes && node.childrenHashes.length > 0) {
-      // Sort children for determinism
       parts.push(node.childrenHashes.sort().join("|"));
     }
-
-    if (node.keyRangeStart) parts.push(node.keyRangeStart);
-    if (node.keyRangeEnd) parts.push(node.keyRangeEnd);
 
     const content = parts.join(":");
     return this.xxhashInstance.h64ToString(content);
@@ -128,7 +120,7 @@ export class ProllyNodeStore {
    * Store a node (content-addressed: same content = same hash = no-op)
    * Returns the content hash
    */
-  async put(node: Omit<ProllyNode, "contentHash" | "createdAt">): Promise<string> {
+  async put(node: Omit<ProllyNode, "contentHash" | "hash">): Promise<string> {
     if (!this.client) throw new Error("Client not initialized");
 
     const contentHash = this.computeHash(node);
@@ -140,43 +132,31 @@ export class ProllyNodeStore {
 
     // Check if already exists in DB
     const existing = await this.client.execute({
-      sql: "SELECT 1 FROM prolly_nodes WHERE content_hash = ?",
+      sql: "SELECT 1 FROM prolly_nodes WHERE id = ?",
       args: [contentHash],
     });
 
     if (existing.rows.length > 0) {
-      // Already exists - just update cache and return
-      const fullNode: ProllyNode = {
-        ...node,
-        contentHash,
-        createdAt: Date.now(),
-      };
+      const fullNode: ProllyNode = { ...node, contentHash, hash: contentHash };
       if (this.config.enableCache) {
         this.cache.set(contentHash, fullNode);
       }
       return contentHash;
     }
 
-    // Insert new node
-    const now = Date.now();
+    // Zig-compatible storage: split data into keys/values BLOBs
+    const level = node.type === "leaf" ? 0 : 1;
+    const keysBlob = node.data ? Buffer.from(node.data) : null;
+    const valuesBlob: Buffer | null = null; // Values merged in keys for TS compat
+    const childrenBlob = node.childrenHashes ? Buffer.from(cbor.encode(node.childrenHashes)) : null;
+
     await this.client.execute({
-      sql: `INSERT INTO prolly_nodes
-            (content_hash, node_type, data, children_hashes, key_range_start, key_range_end, entry_count, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        contentHash,
-        node.type,
-        node.data ? Buffer.from(node.data) : null,
-        node.childrenHashes ? JSON.stringify(node.childrenHashes) : null,
-        node.keyRangeStart || null,
-        node.keyRangeEnd || null,
-        node.entryCount || 0,
-        now,
-      ],
+      sql: `INSERT INTO prolly_nodes (id, level, "keys", "values", children, hash)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [contentHash, level, keysBlob, valuesBlob, childrenBlob, contentHash],
     });
 
-    // Update cache
-    const fullNode: ProllyNode = { ...node, contentHash, createdAt: now };
+    const fullNode: ProllyNode = { ...node, contentHash, hash: contentHash };
     if (this.config.enableCache) {
       this.cache.set(contentHash, fullNode);
     }
@@ -188,14 +168,13 @@ export class ProllyNodeStore {
    * Store multiple nodes in batch
    * Returns map of content hashes
    */
-  async putBatch(nodes: Array<Omit<ProllyNode, "contentHash" | "createdAt">>): Promise<string[]> {
+  async putBatch(nodes: Array<Omit<ProllyNode, "contentHash" | "hash">>): Promise<string[]> {
     if (!this.client) throw new Error("Client not initialized");
     if (nodes.length === 0) return [];
 
     const hashes: string[] = [];
-    const toInsert: Array<{ hash: string; node: Omit<ProllyNode, "contentHash" | "createdAt"> }> = [];
+    const toInsert: Array<{ hash: string; node: Omit<ProllyNode, "contentHash" | "hash"> }> = [];
 
-    // Compute hashes and check cache/existence
     for (const node of nodes) {
       const hash = this.computeHash(node);
       hashes.push(hash);
@@ -209,58 +188,51 @@ export class ProllyNodeStore {
 
     // Check which hashes already exist in DB
     const existingCheck = await this.client.execute({
-      sql: `SELECT content_hash FROM prolly_nodes WHERE content_hash IN (${toInsert.map(() => "?").join(",")})`,
+      sql: `SELECT id FROM prolly_nodes WHERE id IN (${toInsert.map(() => "?").join(",")})`,
       args: toInsert.map((i) => i.hash),
     });
-    const existingHashes = new Set(existingCheck.rows.map((r) => r["content_hash"] as string));
+    const existingHashes = new Set(existingCheck.rows.map((r) => r["id"] as string));
 
-    // Filter to only new nodes
     const newNodes = toInsert.filter((i) => !existingHashes.has(i.hash));
 
     if (newNodes.length === 0) {
-      // All exist - just update cache
       for (const { hash, node } of toInsert) {
         if (this.config.enableCache) {
-          this.cache.set(hash, { ...node, contentHash: hash, createdAt: Date.now() });
+          this.cache.set(hash, { ...node, contentHash: hash, hash });
         }
       }
       return hashes;
     }
 
-    // Batch insert new nodes
-    const now = Date.now();
+    // Batch insert (6 fields per node)
     const batchSize = 100;
-
     for (let i = 0; i < newNodes.length; i += batchSize) {
       const batch = newNodes.slice(i, i + batchSize);
-      const values = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const values = batch.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
       const args: (string | number | Buffer | null)[] = [];
 
       for (const { hash, node } of batch) {
+        const level = node.type === "leaf" ? 0 : 1;
         args.push(
           hash,
-          node.type,
+          level,
           node.data ? Buffer.from(node.data) : null,
-          node.childrenHashes ? JSON.stringify(node.childrenHashes) : null,
-          node.keyRangeStart || null,
-          node.keyRangeEnd || null,
-          node.entryCount || 0,
-          now,
+          null, // values BLOB (merged in keys for TS compat)
+          node.childrenHashes ? Buffer.from(cbor.encode(node.childrenHashes)) : null,
+          hash,
         );
       }
 
       await this.client.execute({
-        sql: `INSERT OR IGNORE INTO prolly_nodes
-              (content_hash, node_type, data, children_hashes, key_range_start, key_range_end, entry_count, created_at)
+        sql: `INSERT OR IGNORE INTO prolly_nodes (id, level, "keys", "values", children, hash)
               VALUES ${values}`,
         args,
       });
     }
 
-    // Update cache for all nodes
     for (const { hash, node } of toInsert) {
       if (this.config.enableCache) {
-        this.cache.set(hash, { ...node, contentHash: hash, createdAt: now });
+        this.cache.set(hash, { ...node, contentHash: hash, hash });
       }
     }
 
@@ -272,7 +244,6 @@ export class ProllyNodeStore {
    * Get a node by content hash
    */
   async get(hash: string): Promise<ProllyNode | null> {
-    // Check cache first
     if (this.config.enableCache) {
       const cached = this.cache.get(hash);
       if (cached) return cached;
@@ -281,30 +252,50 @@ export class ProllyNodeStore {
     if (!this.client) throw new Error("Client not initialized");
 
     const result = await this.client.execute({
-      sql: "SELECT * FROM prolly_nodes WHERE content_hash = ?",
+      sql: "SELECT * FROM prolly_nodes WHERE id = ?",
       args: [hash],
     });
 
     const row = result.rows[0];
     if (!row) return null;
 
-    const node: ProllyNode = {
-      contentHash: row["content_hash"] as string,
-      type: row["node_type"] as ProllyNodeType,
-      data: row["data"] ? new Uint8Array(row["data"] as ArrayBuffer) : undefined,
-      childrenHashes: row["children_hashes"] ? JSON.parse(row["children_hashes"] as string) : undefined,
-      keyRangeStart: (row["key_range_start"] as string) || undefined,
-      keyRangeEnd: (row["key_range_end"] as string) || undefined,
-      entryCount: (row["entry_count"] as number) || undefined,
-      createdAt: row["created_at"] as number,
-    };
+    const node = this.rowToNode(row);
 
-    // Update cache
     if (this.config.enableCache) {
       this.cache.set(hash, node);
     }
 
     return node;
+  }
+
+  /** Convert a DB row (Zig schema) to ProllyNode */
+  private rowToNode(row: Record<string, unknown>): ProllyNode {
+    const level = (row["level"] as number) || 0;
+    const keysBlob = row["keys"] as ArrayBuffer | null;
+    const childrenBlob = row["children"] as ArrayBuffer | null;
+
+    let childrenHashes: string[] | undefined;
+    if (childrenBlob) {
+      try {
+        childrenHashes = cbor.decode(new Uint8Array(childrenBlob)) as string[];
+      } catch {
+        // Legacy JSON fallback
+        try {
+          childrenHashes = JSON.parse(Buffer.from(childrenBlob).toString("utf-8"));
+        } catch {
+          childrenHashes = undefined;
+        }
+      }
+    }
+
+    return {
+      contentHash: row["id"] as string,
+      type: (level === 0 ? "leaf" : "internal") as ProllyNodeType,
+      data: keysBlob ? new Uint8Array(keysBlob) : undefined,
+      childrenHashes,
+      level,
+      hash: (row["hash"] as string) || "",
+    };
   }
 
   /**
@@ -314,7 +305,6 @@ export class ProllyNodeStore {
     const result = new Map<string, ProllyNode>();
     const toFetch: string[] = [];
 
-    // Check cache first
     for (const hash of hashes) {
       if (this.config.enableCache) {
         const cached = this.cache.get(hash);
@@ -329,24 +319,13 @@ export class ProllyNodeStore {
     if (toFetch.length === 0) return result;
     if (!this.client) throw new Error("Client not initialized");
 
-    // Fetch from DB
     const dbResult = await this.client.execute({
-      sql: `SELECT * FROM prolly_nodes WHERE content_hash IN (${toFetch.map(() => "?").join(",")})`,
+      sql: `SELECT * FROM prolly_nodes WHERE id IN (${toFetch.map(() => "?").join(",")})`,
       args: toFetch,
     });
 
     for (const row of dbResult.rows) {
-      const node: ProllyNode = {
-        contentHash: row["content_hash"] as string,
-        type: row["node_type"] as ProllyNodeType,
-        data: row["data"] ? new Uint8Array(row["data"] as ArrayBuffer) : undefined,
-        childrenHashes: row["children_hashes"] ? JSON.parse(row["children_hashes"] as string) : undefined,
-        keyRangeStart: (row["key_range_start"] as string) || undefined,
-        keyRangeEnd: (row["key_range_end"] as string) || undefined,
-        entryCount: (row["entry_count"] as number) || undefined,
-        createdAt: row["created_at"] as number,
-      };
-
+      const node = this.rowToNode(row as Record<string, unknown>);
       result.set(node.contentHash, node);
       if (this.config.enableCache) {
         this.cache.set(node.contentHash, node);
@@ -367,7 +346,7 @@ export class ProllyNodeStore {
     if (!this.client) throw new Error("Client not initialized");
 
     const result = await this.client.execute({
-      sql: "SELECT 1 FROM prolly_nodes WHERE content_hash = ?",
+      sql: "SELECT 1 FROM prolly_nodes WHERE id = ?",
       args: [hash],
     });
 
@@ -381,7 +360,7 @@ export class ProllyNodeStore {
     if (!this.client) throw new Error("Client not initialized");
 
     await this.client.execute({
-      sql: "DELETE FROM prolly_nodes WHERE content_hash = ?",
+      sql: "DELETE FROM prolly_nodes WHERE id = ?",
       args: [hash],
     });
 
@@ -398,7 +377,7 @@ export class ProllyNodeStore {
     if (hashes.length === 0) return 0;
 
     const result = await this.client.execute({
-      sql: `DELETE FROM prolly_nodes WHERE content_hash IN (${hashes.map(() => "?").join(",")})`,
+      sql: `DELETE FROM prolly_nodes WHERE id IN (${hashes.map(() => "?").join(",")})`,
       args: hashes,
     });
 
@@ -457,11 +436,11 @@ export class ProllyNodeStore {
 
     // Get all node hashes in the store
     const allNodes = await this.client.execute({
-      sql: "SELECT content_hash FROM prolly_nodes",
+      sql: "SELECT id FROM prolly_nodes",
       args: [],
     });
 
-    const allHashes = allNodes.rows.map((r) => r["content_hash"] as string);
+    const allHashes = allNodes.rows.map((r) => r["id"] as string);
 
     // Find orphaned nodes
     const orphaned = allHashes.filter((h) => !reachable.has(h));
@@ -490,8 +469,8 @@ export class ProllyNodeStore {
     const countResult = await this.client.execute({
       sql: `SELECT
               COUNT(*) as total,
-              SUM(CASE WHEN node_type = 'leaf' THEN 1 ELSE 0 END) as leaves,
-              SUM(CASE WHEN node_type = 'internal' THEN 1 ELSE 0 END) as internals
+              SUM(CASE WHEN level = 0 THEN 1 ELSE 0 END) as leaves,
+              SUM(CASE WHEN level > 0 THEN 1 ELSE 0 END) as internals
             FROM prolly_nodes`,
       args: [],
     });

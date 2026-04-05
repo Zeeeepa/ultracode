@@ -541,7 +541,6 @@ export async function generateEmbeddingsForEntities(
           },
         });
 
-        et.entity.embeddingText = et.text.slice(0, 200);
         generatedCount++;
       }
     }
@@ -690,9 +689,6 @@ function collectTextsForCentralizedEmbedding(entities: ParsedEntity[], fileConte
         end: entity.location?.end?.index,
       },
     });
-
-    // Store embedding text for search result display
-    entity.embeddingText = text.slice(0, 200);
 
     collectedCount++;
   }

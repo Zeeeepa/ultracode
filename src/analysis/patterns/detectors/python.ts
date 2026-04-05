@@ -100,7 +100,7 @@ type CallInfo = { name: string; kwargs?: Record<string, string> };
 
 /** Safe code snippet for regex (avoids JSC stack overflow) */
 function safeCode(entity: Entity): string {
-  return entity.embeddingText?.slice(0, 8000) ?? "";
+  return ((entity.metadata?.["embeddingText"] ?? "") as string).slice(0, 8000);
 }
 
 /** Extract calls from entity metadata */

@@ -582,7 +582,7 @@ export class GraphAdapter {
     const { projectHash, branchName } = this._fallbackContext;
 
     await this.client.execute({
-      sql: `INSERT OR REPLACE INTO tombstones (entity_id, project_hash, branch_name, entity_type, deleted_at)
+      sql: `INSERT OR REPLACE INTO tombstones (entity_id, project_hash, branch_name, entity_type, created_at)
             VALUES (?, ?, ?, ?, ?)`,
       args: [entityId, projectHash, branchName, entityType, Date.now()],
     });

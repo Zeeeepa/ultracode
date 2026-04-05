@@ -184,7 +184,7 @@ async function generateForDirectory(
     filePath: e.filePath,
     location: e.location,
     language: e.language ?? "",
-    size: e.sizeBytes ?? 0,
+    size: e.size ?? 0,
     hash: e.hash ?? "",
   }));
 
@@ -198,7 +198,7 @@ async function generateForDirectory(
   // Compute current metrics
   const curCount = entities.length;
   let curLoc = 0;
-  for (const e of entities) curLoc += Math.max(e.sizeBytes ?? 0, 0);
+  for (const e of entities) curLoc += Math.max(e.size ?? 0, 0);
 
   // Check previous state
   const existingMeta = await docStorage.getSourceHash(entityId);

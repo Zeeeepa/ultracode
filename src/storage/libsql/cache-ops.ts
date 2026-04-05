@@ -33,17 +33,11 @@ export class CacheOperations {
 
     try {
       const result = await client.execute({
-        sql: `SELECT embedding FROM embedding_cache WHERE content_hash = ?`,
+        sql: `SELECT embedding FROM embedding_cache WHERE key = ?`,
         args: [contentHash],
       });
 
       if (result.rows.length === 0) return null;
-
-      // Update last_used_at and hit_count for LRU tracking
-      await client.execute({
-        sql: `UPDATE embedding_cache SET last_used_at = ?, hit_count = hit_count + 1 WHERE content_hash = ?`,
-        args: [Date.now(), contentHash],
-      });
 
       const row = result.rows[0];
       if (!row?.["embedding"]) return null;
@@ -63,31 +57,18 @@ export class CacheOperations {
     if (!client || contentHashes.length === 0) return new Map();
 
     const result = new Map<string, Float32Array>();
-    const now = Date.now();
 
     try {
-      // Batch query for efficiency via executeIterator
       const placeholders = contentHashes.map(() => "?").join(",");
 
-      const foundHashes: string[] = [];
       for (const row of client.executeIterator({
-        sql: `SELECT content_hash, embedding FROM embedding_cache WHERE content_hash IN (${placeholders})`,
+        sql: `SELECT key, embedding FROM embedding_cache WHERE key IN (${placeholders})`,
         args: contentHashes,
       })) {
         const r = row as Record<string, unknown>;
-        const hash = r["content_hash"] as string;
+        const hash = r["key"] as string;
         const embeddingBlob = r["embedding"] as ArrayBuffer;
         result.set(hash, new Float32Array(embeddingBlob));
-        foundHashes.push(hash);
-      }
-
-      // Batch update last_used_at for LRU
-      if (foundHashes.length > 0) {
-        const updatePlaceholders = foundHashes.map(() => "?").join(",");
-        await client.execute({
-          sql: `UPDATE embedding_cache SET last_used_at = ?, hit_count = hit_count + 1 WHERE content_hash IN (${updatePlaceholders})`,
-          args: [now, ...foundHashes],
-        });
       }
     } catch {
       // Ignore cache errors
@@ -103,7 +84,7 @@ export class CacheOperations {
     contentHash: string,
     model: string,
     embedding: Float32Array,
-    textPreview?: string | undefined,
+    _textPreview?: string | undefined,
   ): Promise<void> {
     return this._w(async () => {
       const client = this.getClient();
@@ -111,13 +92,12 @@ export class CacheOperations {
 
       const now = Date.now();
       try {
-        // Store embedding as raw BLOB (Float32Array → Buffer)
+        // Zig-compatible schema: key, embedding, model, created_at, expires_at
         const embeddingBlob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
         await client.execute({
-          sql: `INSERT OR REPLACE INTO embedding_cache
-              (content_hash, model, embedding, text_preview, hit_count, created_at, last_used_at)
-              VALUES (?, ?, ?, ?, 0, ?, ?)`,
-          args: [contentHash, model, embeddingBlob, textPreview?.slice(0, 100) ?? null, now, now],
+          sql: `INSERT OR REPLACE INTO embedding_cache (key, embedding, model, created_at, expires_at)
+              VALUES (?, ?, ?, ?, 0)`,
+          args: [contentHash, embeddingBlob, model, now],
         });
       } catch {
         // Ignore cache write errors
@@ -138,16 +118,14 @@ export class CacheOperations {
 
       const now = Date.now();
       try {
+        // Zig-compatible schema: key, embedding, model, created_at, expires_at
         const statements = entries.map((entry) => ({
-          sql: `INSERT OR REPLACE INTO embedding_cache
-              (content_hash, model, embedding, text_preview, hit_count, created_at, last_used_at)
-              VALUES (?, ?, ?, ?, 0, ?, ?)`,
+          sql: `INSERT OR REPLACE INTO embedding_cache (key, embedding, model, created_at, expires_at)
+              VALUES (?, ?, ?, ?, 0)`,
           args: [
             entry.contentHash,
-            entry.model,
             Buffer.from(entry.embedding.buffer, entry.embedding.byteOffset, entry.embedding.byteLength),
-            entry.textPreview?.slice(0, 100) ?? null,
-            now,
+            entry.model,
             now,
           ],
         }));

@@ -54,6 +54,8 @@ const PRAGMA_STATEMENTS = [
   "PRAGMA temp_store = MEMORY",
   "PRAGMA mmap_size = 268435456", // 256MB mmap for fast reads
   "PRAGMA auto_vacuum = NONE", // data is regeneratable, no vacuum overhead
+  "PRAGMA threads = 4", // Zig compat: enable multi-threaded sorting
+  "PRAGMA cell_size_check = OFF", // Zig compat: skip cell size validation for speed
 ];
 
 /**

@@ -232,23 +232,21 @@ export class VersioningOps {
 
     await client.batch(
       [
-        // Staging tables must match main table columns exactly (for SELECT * in commitStaging)
+        // Staging tables must match main table columns exactly (Zig-compatible schema)
         `CREATE TABLE IF NOT EXISTS _staging_entities (
         id TEXT NOT NULL, project_hash TEXT NOT NULL, branch_name TEXT NOT NULL,
         name TEXT NOT NULL, type TEXT NOT NULL, file_path TEXT NOT NULL,
-        location TEXT NOT NULL, metadata BLOB, hash TEXT,
-        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-        complexity_score INTEGER DEFAULT 1, language TEXT,
-        size_bytes INTEGER DEFAULT 0, embedding_base64 TEXT,
-        embedding_text TEXT, file_gen INTEGER NOT NULL DEFAULT 1,
+        location TEXT DEFAULT '', language TEXT DEFAULT '', metadata BLOB,
+        hash TEXT DEFAULT '', complexity INTEGER DEFAULT 0, size INTEGER DEFAULT 0,
         is_async INTEGER DEFAULT 0, is_exported INTEGER DEFAULT 0,
-        is_test INTEGER DEFAULT 0, has_docs INTEGER DEFAULT 0
+        is_test INTEGER DEFAULT 0, has_docs INTEGER DEFAULT 0,
+        file_gen INTEGER DEFAULT 1, created_at INTEGER DEFAULT 0, updated_at INTEGER DEFAULT 0
       )`,
         `CREATE TABLE IF NOT EXISTS _staging_relationships (
         id TEXT NOT NULL, project_hash TEXT NOT NULL, branch_name TEXT NOT NULL,
         from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL,
-        metadata BLOB, weight REAL DEFAULT 1.0, created_at INTEGER NOT NULL,
-        file_path TEXT DEFAULT '', updated_at INTEGER DEFAULT 0
+        file_path TEXT DEFAULT '', weight REAL DEFAULT 1.0, metadata BLOB,
+        created_at INTEGER DEFAULT 0, updated_at INTEGER DEFAULT 0
       )`,
         `CREATE TABLE IF NOT EXISTS _staging_name_tokens (
         token TEXT NOT NULL, entity_id TEXT NOT NULL,
@@ -257,7 +255,7 @@ export class VersioningOps {
       )`,
         `CREATE TABLE IF NOT EXISTS _staging_files (
         path TEXT NOT NULL, project_hash TEXT NOT NULL, branch_name TEXT NOT NULL,
-        hash TEXT, last_indexed INTEGER NOT NULL, entity_count INTEGER DEFAULT 0,
+        hash TEXT DEFAULT '', last_indexed INTEGER DEFAULT 0, entity_count INTEGER DEFAULT 0,
         size INTEGER DEFAULT 0, language TEXT DEFAULT ''
       )`,
         // Clear any leftover data from previous crash
@@ -302,24 +300,27 @@ export class VersioningOps {
     // 2. Bulk move with deduplication
     await client.batch(
       [
-        // Explicit column lists — safe even if ALTER TABLE added columns in different order
-        `INSERT OR REPLACE INTO entities (id, project_hash, branch_name, name, type, file_path,
-          location, metadata, hash, created_at, updated_at, complexity_score, language,
-          size_bytes, embedding_base64, embedding_text, file_gen,
-          is_async, is_exported, is_test, has_docs)
+        // Explicit column lists — Zig-compatible schema
+        // Use subquery with GROUP BY to deduplicate (staging table has no UNIQUE constraint,
+        // and INSERT OR REPLACE fails on duplicate rows within the same INSERT SELECT)
+        `INSERT INTO entities (id, project_hash, branch_name, name, type, file_path,
+          location, language, metadata, hash, complexity, size,
+          is_async, is_exported, is_test, has_docs, file_gen, created_at, updated_at)
          SELECT id, project_hash, branch_name, name, type, file_path,
-          location, metadata, hash, created_at, updated_at, complexity_score, language,
-          size_bytes, embedding_base64, embedding_text, file_gen,
-          is_async, is_exported, is_test, has_docs
-         FROM _staging_entities`,
-        `INSERT OR REPLACE INTO relationships (id, project_hash, branch_name, from_id, to_id, type,
-          metadata, weight, created_at, file_path, updated_at)
+          location, language, metadata, hash, MAX(complexity), MAX(size),
+          MAX(is_async), MAX(is_exported), MAX(is_test), MAX(has_docs), MAX(file_gen), MIN(created_at), MAX(updated_at)
+         FROM _staging_entities
+         GROUP BY id, project_hash, branch_name`,
+        `INSERT INTO relationships (id, project_hash, branch_name, from_id, to_id, type,
+          file_path, weight, metadata, created_at, updated_at)
          SELECT id, project_hash, branch_name, from_id, to_id, type,
-          metadata, weight, created_at, file_path, updated_at
-         FROM _staging_relationships`,
-        `INSERT OR IGNORE INTO name_tokens (token, entity_id, project_hash, branch_name, source)
-         SELECT token, entity_id, project_hash, branch_name, source
-         FROM _staging_name_tokens`,
+          file_path, MAX(weight), metadata, MIN(created_at), MAX(updated_at)
+         FROM _staging_relationships
+         GROUP BY id, project_hash, branch_name`,
+        `INSERT INTO name_tokens (token, entity_id, project_hash, branch_name, source)
+         SELECT token, entity_id, project_hash, branch_name, MAX(source)
+         FROM _staging_name_tokens
+         GROUP BY token, entity_id, project_hash, branch_name`,
         `INSERT OR REPLACE INTO files (path, project_hash, branch_name, hash, last_indexed, entity_count, size, language)
          SELECT path, project_hash, branch_name, hash, last_indexed, entity_count, size, language
          FROM _staging_files`,
@@ -370,31 +371,39 @@ export class VersioningOps {
   // ===========================================================================
 
   private static readonly GRAPH_INDEXES = [
-    "idx_entities_project_branch",
-    "idx_entities_file_path",
-    "idx_entities_type",
+    // Zig-compatible index names
+    "idx_entities_pk",
+    "idx_entities_file",
     "idx_entities_name",
-    "idx_entities_file_gen",
-    "idx_relationships_project_branch",
-    "idx_relationships_from",
-    "idx_relationships_to",
+    "idx_entities_type",
+    "idx_entities_gen",
+    "idx_rels_pk",
+    "idx_rels_from",
+    "idx_rels_to",
+    "idx_rels_file",
     "idx_files_project_branch",
     "idx_tombstones_lookup",
-    "idx_name_tokens_lookup",
+    "idx_tokens_pk",
+    "idx_tokens_entity",
+    "idx_tokens_lookup",
   ];
 
   static readonly GRAPH_INDEX_CREATES = [
-    `CREATE INDEX IF NOT EXISTS idx_entities_project_branch ON entities(project_hash, branch_name)`,
-    `CREATE INDEX IF NOT EXISTS idx_entities_file_path ON entities(file_path, project_hash, branch_name)`,
-    `CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type, project_hash, branch_name)`,
+    // Zig-compatible indexes (synced with schema-manager.ts)
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_pk ON entities(id, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_entities_file ON entities(file_path, project_hash, branch_name)`,
     `CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name, project_hash, branch_name)`,
-    `CREATE INDEX IF NOT EXISTS idx_relationships_project_branch ON relationships(project_hash, branch_name)`,
-    `CREATE INDEX IF NOT EXISTS idx_relationships_from ON relationships(from_id, project_hash, branch_name)`,
-    `CREATE INDEX IF NOT EXISTS idx_relationships_to ON relationships(to_id, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_entities_gen ON entities(file_gen, file_path, project_hash, branch_name)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_rels_pk ON relationships(id, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_rels_from ON relationships(from_id, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_rels_to ON relationships(to_id, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_rels_file ON relationships(file_path, project_hash, branch_name)`,
     `CREATE INDEX IF NOT EXISTS idx_files_project_branch ON files(project_hash, branch_name)`,
     `CREATE INDEX IF NOT EXISTS idx_tombstones_lookup ON tombstones(project_hash, branch_name, entity_type)`,
-    `CREATE INDEX IF NOT EXISTS idx_name_tokens_lookup ON name_tokens(token, project_hash, branch_name)`,
-    `CREATE INDEX IF NOT EXISTS idx_entities_file_gen ON entities(file_path, project_hash, branch_name, file_gen)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_pk ON name_tokens(token, entity_id, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_tokens_entity ON name_tokens(entity_id, project_hash, branch_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_tokens_lookup ON name_tokens(token, project_hash, branch_name, source)`,
   ];
 
   async dropBulkIndexes(): Promise<void> {

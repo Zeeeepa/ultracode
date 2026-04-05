@@ -53,20 +53,27 @@ export class CommitManager {
 
     await this.client.batch(
       [
-        `CREATE TABLE IF NOT EXISTS graph_commits (
-          commit_hash TEXT PRIMARY KEY,
+        // Zig-compatible schema: commits with id/project_hash/branch_name/parent_id/root_id/message/created_at
+        `CREATE TABLE IF NOT EXISTS commits (
+          id TEXT NOT NULL PRIMARY KEY,
           project_hash TEXT NOT NULL,
           branch_name TEXT NOT NULL,
-          parent_hash TEXT,
-          root_node_hash TEXT NOT NULL,
-          file_tree_hash TEXT,
-          message TEXT,
-          entity_count INTEGER NOT NULL DEFAULT 0,
-          relationship_count INTEGER NOT NULL DEFAULT 0,
-          created_at INTEGER NOT NULL
+          parent_id TEXT,
+          root_id TEXT,
+          message TEXT DEFAULT '',
+          created_at INTEGER DEFAULT 0
         )`,
-        `CREATE INDEX IF NOT EXISTS idx_commits_branch ON graph_commits(project_hash, branch_name, created_at DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_commits_parent ON graph_commits(parent_hash)`,
+        `CREATE INDEX IF NOT EXISTS idx_commits_branch ON commits(project_hash, branch_name, created_at DESC)`,
+        // Zig-compatible: branch_diffs for cached diffs
+        `CREATE TABLE IF NOT EXISTS branch_diffs (
+          id TEXT NOT NULL PRIMARY KEY,
+          project_hash TEXT NOT NULL,
+          from_branch TEXT NOT NULL,
+          to_branch TEXT NOT NULL,
+          diff BLOB,
+          created_at INTEGER DEFAULT 0
+        )`,
+        // TS extension: branch_heads for fast head lookups
         `CREATE TABLE IF NOT EXISTS branch_heads (
           project_hash TEXT NOT NULL,
           branch_name TEXT NOT NULL,
@@ -96,60 +103,49 @@ export class CommitManager {
    */
   async commit(
     rootNodeHash: string,
-    fileTreeHash: string | null,
-    stats: { entityCount: number; relationshipCount: number },
+    _fileTreeHash: string | null,
+    _stats: { entityCount: number; relationshipCount: number },
     message?: string,
   ): Promise<GraphCommit> {
     if (!this.client) throw new Error("Client not initialized");
     if (!this.xxhashInstance) throw new Error("xxHash not initialized");
 
-    // Get parent commit (current head)
     const parentCommit = await this.getBranchHead();
     const parentHash = parentCommit?.commitHash || null;
 
-    // Compute commit hash
     const now = Date.now();
     const commitInput = `${this.projectHash}|${this.branchName}|${parentHash || ""}|${rootNodeHash}|${now}`;
     const commitHash = this.xxhashInstance.h64ToString(commitInput);
 
+    // Zig-compatible commit: id, project_hash, branch_name, parent_id, root_id, message, created_at
     const commit: GraphCommit = {
       commitHash,
       projectHash: this.projectHash,
       branchName: this.branchName,
       parentHash,
       rootNodeHash,
-      fileTreeHash,
       message,
-      entityCount: stats.entityCount,
-      relationshipCount: stats.relationshipCount,
       createdAt: now,
     };
 
-    // Insert commit
     await this.client.execute({
-      sql: `INSERT INTO graph_commits
-            (commit_hash, project_hash, branch_name, parent_hash, root_node_hash, file_tree_hash, message, entity_count, relationship_count, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO commits (id, project_hash, branch_name, parent_id, root_id, message, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [
         commit.commitHash,
         commit.projectHash,
         commit.branchName,
         commit.parentHash,
         commit.rootNodeHash,
-        commit.fileTreeHash,
-        commit.message || null,
-        commit.entityCount,
-        commit.relationshipCount,
+        commit.message || "",
         commit.createdAt,
       ],
     });
 
-    // Update branch head
     await this.updateBranchHead(commitHash);
 
     log.i("COMMIT_MGR", "commit_created", {
       hash: commitHash.slice(0, 8),
-      entities: stats.entityCount,
       parent: parentHash?.slice(0, 8) || "none",
     });
 
@@ -163,7 +159,7 @@ export class CommitManager {
     if (!this.client) throw new Error("Client not initialized");
 
     const result = await this.client.execute({
-      sql: "SELECT * FROM graph_commits WHERE commit_hash = ?",
+      sql: "SELECT * FROM commits WHERE id = ?",
       args: [commitHash],
     });
 
@@ -180,7 +176,7 @@ export class CommitManager {
     if (!this.client) throw new Error("Client not initialized");
 
     const result = await this.client.execute({
-      sql: `SELECT * FROM graph_commits
+      sql: `SELECT * FROM commits
             WHERE project_hash = ? AND branch_name = ?
             ORDER BY created_at DESC
             LIMIT ?`,
@@ -200,7 +196,7 @@ export class CommitManager {
     if (!this.client) throw new Error("Client not initialized");
 
     const result = await this.client.execute({
-      sql: `SELECT * FROM graph_commits
+      sql: `SELECT * FROM commits
             WHERE project_hash = ? AND branch_name = ?
               AND created_at >= ?
             ORDER BY created_at DESC
@@ -359,11 +355,11 @@ export class CommitManager {
   }
 
   /**
-   * Get the file tree hash for a specific commit
+   * Get the file tree hash for a specific commit.
+   * No longer stored in Zig-compatible schema — always returns null.
    */
-  async getFileTreeHashAt(commitHash: string): Promise<string | null> {
-    const commit = await this.getCommit(commitHash);
-    return commit?.fileTreeHash || null;
+  async getFileTreeHashAt(_commitHash: string): Promise<string | null> {
+    return null;
   }
 
   /**
@@ -405,7 +401,7 @@ export class CommitManager {
               COUNT(*) as total,
               MIN(created_at) as oldest,
               MAX(created_at) as newest
-            FROM graph_commits
+            FROM commits
             WHERE project_hash = ?`,
       args: [this.projectHash],
     });
@@ -437,11 +433,11 @@ export class CommitManager {
     if (!this.client) throw new Error("Client not initialized");
 
     const result = await this.client.execute({
-      sql: "SELECT DISTINCT root_node_hash FROM graph_commits WHERE project_hash = ?",
+      sql: "SELECT DISTINCT root_id FROM commits WHERE project_hash = ?",
       args: [this.projectHash],
     });
 
-    return new Set(result.rows.map((r) => r["root_node_hash"] as string));
+    return new Set(result.rows.map((r) => r["root_id"] as string));
   }
 
   /**
@@ -452,9 +448,9 @@ export class CommitManager {
   async getAllActiveRootHashes(): Promise<Set<string>> {
     if (!this.client) throw new Error("Client not initialized");
 
-    const result = await this.client.execute("SELECT DISTINCT root_node_hash FROM graph_commits");
+    const result = await this.client.execute("SELECT DISTINCT root_id FROM commits");
 
-    return new Set(result.rows.map((r) => r["root_node_hash"] as string));
+    return new Set(result.rows.map((r) => r["root_id"] as string));
   }
 
   /**
@@ -466,20 +462,19 @@ export class CommitManager {
 
     // Get commits to keep (most recent)
     const toKeep = await this.client.execute({
-      sql: `SELECT commit_hash FROM graph_commits
+      sql: `SELECT id FROM commits
             WHERE project_hash = ? AND branch_name = ?
             ORDER BY created_at DESC
             LIMIT ?`,
       args: [this.projectHash, this.branchName, keepCount],
     });
 
-    const keepHashes = new Set(toKeep.rows.map((r) => r["commit_hash"] as string));
+    const keepHashes = new Set(toKeep.rows.map((r) => r["id"] as string));
 
-    // Delete all other commits for this branch
     const result = await this.client.execute({
-      sql: `DELETE FROM graph_commits
+      sql: `DELETE FROM commits
             WHERE project_hash = ? AND branch_name = ?
-            AND commit_hash NOT IN (${Array.from(keepHashes)
+            AND id NOT IN (${Array.from(keepHashes)
               .map(() => "?")
               .join(",")})`,
       args: [this.projectHash, this.branchName, ...Array.from(keepHashes)],
@@ -498,16 +493,13 @@ export class CommitManager {
 
   private rowToCommit(row: Record<string, unknown>): GraphCommit {
     return {
-      commitHash: row["commit_hash"] as string,
+      commitHash: row["id"] as string,
       projectHash: row["project_hash"] as string,
       branchName: row["branch_name"] as string,
-      parentHash: (row["parent_hash"] as string) || null,
-      rootNodeHash: row["root_node_hash"] as string,
-      fileTreeHash: (row["file_tree_hash"] as string) || null,
+      parentHash: (row["parent_id"] as string) || null,
+      rootNodeHash: (row["root_id"] as string) || "",
       message: (row["message"] as string) || undefined,
-      entityCount: row["entity_count"] as number,
-      relationshipCount: row["relationship_count"] as number,
-      createdAt: row["created_at"] as number,
+      createdAt: (row["created_at"] as number) || 0,
     };
   }
 

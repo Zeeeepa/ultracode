@@ -77,7 +77,7 @@ export class CooccurrenceIndex {
 
     // Update term frequencies
     const termCounts = countTokens(text, minTermLength);
-    await this.storage.updateTermFrequencies(termCounts, true);
+    await this.storage.updateTermFrequenciesLegacy(termCounts, true);
   }
 
   /**
@@ -129,7 +129,7 @@ export class CooccurrenceIndex {
     }
 
     if (allTermCounts.size > 0) {
-      await this.storage.updateTermFrequencies(allTermCounts, true);
+      await this.storage.updateTermFrequenciesLegacy(allTermCounts, true);
     }
   }
 

@@ -22,15 +22,18 @@ export interface EntityRow {
   type: string;
   file_path: string;
   location: string;
+  language?: string | null;
   metadata?: Buffer | Uint8Array | string | null; // CBOR BLOB or legacy JSON TEXT
-  hash: string;
+  hash?: string | null;
+  complexity?: number | null;
+  size?: number | null;
+  is_async?: number | null;
+  is_exported?: number | null;
+  is_test?: number | null;
+  has_docs?: number | null;
+  file_gen?: number | null;
   created_at: number;
   updated_at: number;
-  complexity_score?: number | null;
-  language?: string | null;
-  size_bytes?: number | null;
-  embedding_base64?: string | null;
-  embedding_text?: string | null;
 }
 
 /**
@@ -64,11 +67,9 @@ export function rowToEntity(row: EntityRow): Entity {
     hash: row.hash || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    complexityScore: row.complexity_score ?? undefined,
+    complexity: row.complexity ?? 0,
     language: row.language ?? undefined,
-    sizeBytes: row.size_bytes ?? undefined,
-    embeddingBase64: row.embedding_base64 ?? undefined,
-    embeddingText: row.embedding_text ?? undefined,
+    size: row.size ?? 0,
   };
 }
 

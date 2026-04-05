@@ -9,7 +9,6 @@
  */
 
 import { log } from "../../logging/index.js";
-import { sleep } from "../../utils/runtime-detection.js";
 import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
 
 // =============================================================================
@@ -62,7 +61,6 @@ export class CooccurrenceOperations {
       if (!client) throw new Error("Client not initialized");
 
       const { projectHash, branchName } = this.getContext();
-      const now = Date.now();
 
       // Batch size for INSERT statements (avoid too large queries)
       const BATCH_SIZE = 100;
@@ -71,7 +69,7 @@ export class CooccurrenceOperations {
       for (let i = 0; i < entries.length; i += BATCH_SIZE) {
         const batch = entries.slice(i, i + BATCH_SIZE);
 
-        // Build VALUES clause
+        // Build VALUES clause (5 cols: term1, term2, project_hash, branch_name, count)
         const values: string[] = [];
         const args: (string | number)[] = [];
 
@@ -79,21 +77,19 @@ export class CooccurrenceOperations {
           const [term1, term2] = key.split("|");
           if (!term1 || !term2) continue;
 
-          values.push("(?, ?, ?, ?, ?, ?)");
-          args.push(term1, term2, count, projectHash, branchName, now);
+          values.push("(?, ?, ?, ?, ?)");
+          args.push(term1, term2, projectHash, branchName, count);
         }
 
         if (values.length === 0) continue;
 
-        // UPSERT: increment count on conflict
+        // UPSERT: increment count on conflict (Zig-compatible schema)
         await client.execute({
           sql: `
-          INSERT INTO cooccurrence (term1, term2, count, project_hash, branch_name, updated_at)
+          INSERT INTO cooccurrence (term1, term2, project_hash, branch_name, count)
           VALUES ${values.join(", ")}
           ON CONFLICT(term1, term2, project_hash, branch_name)
-          DO UPDATE SET
-            count = cooccurrence.count + excluded.count,
-            updated_at = excluded.updated_at
+          DO UPDATE SET count = cooccurrence.count + excluded.count
         `,
           args,
         });
@@ -102,22 +98,19 @@ export class CooccurrenceOperations {
   }
 
   /**
-   * Update term frequencies for PMI calculation.
-   * Called during indexing alongside co-occurrence updates.
-   * Entire loop is inside the mutex.
+   * Update per-entity term frequencies (Zig-compatible schema).
+   * Stores (term, entity_id, frequency) — one row per (term, entity) pair.
    *
-   * @param termCounts - Map of term → count in the document
-   * @param isNewDocument - Whether this is a new document (for doc_count increment)
+   * @param entries - Array of {term, entityId, frequency} tuples
    */
-  async updateTermFrequencies(termCounts: Map<string, number>, isNewDocument = true): Promise<void> {
-    if (termCounts.size === 0) return;
+  async updateTermFrequencies(entries: Array<{ term: string; entityId: string; frequency: number }>): Promise<void> {
+    if (entries.length === 0) return;
     return this._w(async () => {
       const client = this.getClient();
       if (!client) throw new Error("Client not initialized");
 
       const { projectHash, branchName } = this.getContext();
       const BATCH_SIZE = 100;
-      const entries = Array.from(termCounts.entries());
 
       for (let i = 0; i < entries.length; i += BATCH_SIZE) {
         const batch = entries.slice(i, i + BATCH_SIZE);
@@ -125,26 +118,39 @@ export class CooccurrenceOperations {
         const values: string[] = [];
         const args: (string | number)[] = [];
 
-        for (const [term, count] of batch) {
+        for (const { term, entityId, frequency } of batch) {
           values.push("(?, ?, ?, ?, ?)");
-          args.push(term, isNewDocument ? 1 : 0, count, projectHash, branchName);
+          args.push(term, entityId, projectHash, branchName, frequency);
         }
 
         if (values.length === 0) continue;
 
         await client.execute({
           sql: `
-          INSERT INTO term_frequency (term, doc_count, total_count, project_hash, branch_name)
+          INSERT INTO term_frequency (term, entity_id, project_hash, branch_name, frequency)
           VALUES ${values.join(", ")}
-          ON CONFLICT(term, project_hash, branch_name)
-          DO UPDATE SET
-            doc_count = term_frequency.doc_count + excluded.doc_count,
-            total_count = term_frequency.total_count + excluded.total_count
+          ON CONFLICT(term, entity_id, project_hash, branch_name)
+          DO UPDATE SET frequency = excluded.frequency
         `,
           args,
         });
       }
     }); // end _w
+  }
+
+  /**
+   * Legacy adapter: convert Map<string, number> to per-entity format.
+   * Used by callers that don't have entity context yet.
+   */
+  async updateTermFrequenciesLegacy(termCounts: Map<string, number>, _isNewDocument = true): Promise<void> {
+    if (termCounts.size === 0) return;
+    // Without entity context, store with a placeholder entity_id
+    const entries = Array.from(termCounts.entries()).map(([term, count]) => ({
+      term,
+      entityId: "_aggregate",
+      frequency: count,
+    }));
+    return this.updateTermFrequencies(entries);
   }
 
   // ===========================================================================
@@ -167,28 +173,27 @@ export class CooccurrenceOperations {
     const normalizedTerm = term.toLowerCase();
 
     // Query co-occurrences where term appears as either term1 or term2
-    // Prioritize by PMI if available, otherwise by count
+    // Sort by count (no PMI column in Zig-compatible schema)
     const results: RelatedTerm[] = [];
     for (const row of client.executeIterator({
       sql: `
         SELECT
           CASE WHEN term1 = ? THEN term2 ELSE term1 END as related_term,
-          count,
-          COALESCE(pmi, 0) as pmi_score
+          count
         FROM cooccurrence
         WHERE project_hash = ? AND branch_name = ?
           AND (term1 = ? OR term2 = ?)
-        ORDER BY
-          CASE WHEN pmi IS NOT NULL THEN pmi ELSE count * 0.01 END DESC
+        ORDER BY count DESC
         LIMIT ?
       `,
       args: [normalizedTerm, projectHash, branchName, normalizedTerm, normalizedTerm, limit],
     })) {
       const r = row as Record<string, unknown>;
+      const count = r["count"] as number;
       results.push({
         term: r["related_term"] as string,
-        score: (r["pmi_score"] as number) || (r["count"] as number) * 0.01,
-        count: r["count"] as number,
+        score: count,
+        count,
       });
     }
 
@@ -225,13 +230,11 @@ export class CooccurrenceOperations {
         SELECT
           CASE WHEN term1 IN (${placeholders}) THEN term1 ELSE term2 END as source_term,
           CASE WHEN term1 IN (${placeholders}) THEN term2 ELSE term1 END as related_term,
-          count,
-          COALESCE(pmi, 0) as pmi_score
+          count
         FROM cooccurrence
         WHERE project_hash = ? AND branch_name = ?
           AND (term1 IN (${placeholders}) OR term2 IN (${placeholders}))
-        ORDER BY
-          CASE WHEN pmi IS NOT NULL THEN pmi ELSE count * 0.01 END DESC
+        ORDER BY count DESC
         LIMIT 2000
       `,
       args: [...normalizedTerms, ...normalizedTerms, projectHash, branchName, ...normalizedTerms, ...normalizedTerms],
@@ -239,13 +242,14 @@ export class CooccurrenceOperations {
       const r = row as Record<string, unknown>;
       const sourceTerm = r["source_term"] as string;
       const relatedTerm = r["related_term"] as string;
+      const count = r["count"] as number;
       const arr = grouped.get(sourceTerm);
 
       if (arr && arr.length < limitPerTerm) {
         arr.push({
           term: relatedTerm,
-          score: (r["pmi_score"] as number) || (r["count"] as number) * 0.01,
-          count: r["count"] as number,
+          score: count,
+          count,
         });
       }
     }
@@ -254,102 +258,15 @@ export class CooccurrenceOperations {
   }
 
   // ===========================================================================
-  // PMI CALCULATION
+  // PMI CALCULATION (in-memory, no longer stored in DB)
   // ===========================================================================
 
   /**
-   * Recalculate PMI (Pointwise Mutual Information) for all co-occurrence pairs.
-   * PMI = log2(P(x,y) / (P(x) * P(y)))
-   *
-   * Uses batched approach: preloads term frequencies, calculates PMI in JS,
-   * then updates in batches with event loop yields to prevent CPU blocking.
+   * Recalculate PMI — no-op in Zig-compatible schema (PMI column removed).
+   * PMI can be computed on-the-fly via getRelatedTerms using count-based scoring.
    */
   async recalculatePMI(): Promise<void> {
-    return this._w(async () => {
-      const client = this.getClient();
-      if (!client) throw new Error("Client not initialized");
-
-      const { projectHash, branchName } = this.getContext();
-      const startTime = Date.now();
-
-      // Step 1: Preload all term frequencies into a Map for O(1) lookups
-      const tfResult = await client.execute({
-        sql: `SELECT term, total_count, doc_count FROM term_frequency WHERE project_hash = ? AND branch_name = ?`,
-        args: [projectHash, branchName],
-      });
-
-      const termFreqs = new Map<string, number>();
-      let maxDocCount = 1;
-      for (const row of tfResult.rows) {
-        const term = row["term"] as string;
-        const totalCount = row["total_count"] as number;
-        const docCount = row["doc_count"] as number;
-        termFreqs.set(term, totalCount);
-        if (docCount > maxDocCount) maxDocCount = docCount;
-      }
-      const totalDocs = maxDocCount;
-
-      // Step 2: Read all co-occurrence pairs
-      const coocResult = await client.execute({
-        sql: `SELECT term1, term2, count FROM cooccurrence WHERE project_hash = ? AND branch_name = ?`,
-        args: [projectHash, branchName],
-      });
-
-      const totalPairsResult = await client.execute({
-        sql: `SELECT SUM(count) as total FROM cooccurrence WHERE project_hash = ? AND branch_name = ?`,
-        args: [projectHash, branchName],
-      });
-      const totalPairs = (totalPairsResult.rows[0]?.["total"] as number) || 1;
-
-      if (coocResult.rows.length === 0) {
-        log.i("COOCOPS", "pmi_skip", { reason: "no_pairs" });
-        return;
-      }
-
-      log.i("COOCOPS", "pmi_start", { pairs: coocResult.rows.length, terms: termFreqs.size, totalDocs, totalPairs });
-
-      // Step 3: Calculate PMI in JS and batch update
-      const BATCH_SIZE = 500;
-      let updated = 0;
-
-      for (let i = 0; i < coocResult.rows.length; i += BATCH_SIZE) {
-        const batch = coocResult.rows.slice(i, i + BATCH_SIZE);
-        const statements = [];
-
-        for (const row of batch) {
-          const term1 = row["term1"] as string;
-          const term2 = row["term2"] as string;
-          const count = row["count"] as number;
-
-          const tf1 = termFreqs.get(term1) || 0;
-          const tf2 = termFreqs.get(term2) || 0;
-
-          let pmi = 0;
-          if (tf1 > 0 && tf2 > 0) {
-            const pXY = count / totalPairs;
-            const pX = tf1 / totalDocs;
-            const pY = tf2 / totalDocs;
-            pmi = Math.log2(pXY / (pX * pY));
-          }
-
-          statements.push({
-            sql: `UPDATE cooccurrence SET pmi = ? WHERE term1 = ? AND term2 = ? AND project_hash = ? AND branch_name = ?`,
-            args: [pmi, term1, term2, projectHash, branchName] as (string | number)[],
-          });
-        }
-
-        await client.batch(statements, "write");
-        updated += batch.length;
-
-        // Yield to event loop every batch to prevent CPU blocking
-        if (i + BATCH_SIZE < coocResult.rows.length) {
-          await sleep(0);
-        }
-      }
-
-      const elapsed = Date.now() - startTime;
-      log.i("COOCOPS", "pmi_recalculated", { ms: elapsed, pairs: updated, terms: termFreqs.size, totalDocs });
-    }); // end _w
+    // No-op: PMI column removed in Zig-compatible schema
   }
 
   // ===========================================================================

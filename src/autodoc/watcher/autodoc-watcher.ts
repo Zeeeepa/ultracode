@@ -6,7 +6,7 @@
  *
  * Features:
  * - Watches for file changes via KnowledgeBus
- * - Debounces updates (default 30-60 seconds)
+ * - Debounces updates (default 5 min, range 2-10 min)
  * - Incrementally updates only affected modules
  * - Updates line number references
  * - Adds/removes exported entities
@@ -49,11 +49,11 @@ interface ModuleInfoWithLLM extends ModuleInfo {
 // =============================================================================
 
 export interface AutoDocWatcherConfig {
-  /** Debounce delay in milliseconds (default: 45000 = 45 seconds) */
+  /** Debounce delay in milliseconds (default: 300000 = 5 minutes) */
   debounceMs?: number | undefined;
-  /** Minimum debounce delay (default: 30000 = 30 seconds) */
+  /** Minimum debounce delay (default: 120000 = 2 minutes) */
   minDebounceMs?: number | undefined;
-  /** Maximum debounce delay (default: 60000 = 60 seconds) */
+  /** Maximum debounce delay (default: 600000 = 10 minutes) */
   maxDebounceMs?: number | undefined;
   /** Root directory to watch */
   rootDir: string;
@@ -107,9 +107,9 @@ export class AutoDocWatcher {
 
   constructor(config: AutoDocWatcherConfig) {
     this.config = {
-      debounceMs: config.debounceMs ?? 5000,
-      minDebounceMs: config.minDebounceMs ?? 3000,
-      maxDebounceMs: config.maxDebounceMs ?? 15000,
+      debounceMs: config.debounceMs ?? 300_000, // 5 min — prevent LLM thrashing on rapid changes
+      minDebounceMs: config.minDebounceMs ?? 120_000, // 2 min minimum
+      maxDebounceMs: config.maxDebounceMs ?? 600_000, // 10 min maximum
       rootDir: config.rootDir,
       enabled: config.enabled ?? true,
       useLlm: config.useLlm, // Keep undefined for lazy check
@@ -739,13 +739,9 @@ export class AutoDocWatcher {
         log.d("AUTODOCWATCH", "index_completed_all_exist", { total_modules: modules.length });
       }
 
-      // Background LLM enrichment for existing files with pending descriptions
-      const useLlm = await this.shouldUseLlm();
-      if (useLlm) {
-        this.enrichPendingModules(modules).catch((e) => {
-          log.w("AUTODOCWATCH", "enrich_pending_error", { err: (e as Error).message });
-        });
-      }
+      // LLM enrichment deferred to debounced file change events (not on index:completed).
+      // Each enrichment call takes ~90 sec via Claude CLI and blocks the MCP server.
+      log.d("AUTODOCWATCH", "enrich_skipped_on_index_complete", { modules: modules.length });
     } catch (error) {
       log.e("AUTODOCWATCH", "index_completed_error", { error: String(error) });
     }
@@ -755,6 +751,7 @@ export class AutoDocWatcher {
    * Background enrichment: find AUTODOC.md files with "## New (pending description)"
    * and run LLM enrichment on them. Non-blocking, fire-and-forget.
    */
+  // @ts-expect-error — kept for future use via debounced file change events
   private async enrichPendingModules(modules: ModuleInfo[]): Promise<void> {
     const PENDING_MARKER = "## New (pending description)";
     const pendingPaths: { modPath: string; autodocPath: string; content: string }[] = [];

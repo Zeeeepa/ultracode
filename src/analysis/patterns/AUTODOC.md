@@ -1,5 +1,7 @@
 # Patterns
 
+Pattern detection system identifying code anti-patterns, smells, optimizations, and best practices
+
 ## Overview
 
 The Patterns module is a multi-language code analysis system that detects anti-patterns, code smells, optimizations, and best practices through a two-stage pipeline combining structural metadata matching with semantic embedding validation. It orchestrates custom detectors, exemplar storage, and semantic similarity scoring to classify code patterns with configurable severity levels. The system uses YAML-based pattern definitions indexed by language, curated code examples with cached embeddings, and a formatter that supports multiple output formats for scan results.

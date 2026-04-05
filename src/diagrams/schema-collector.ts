@@ -316,7 +316,7 @@ export class SchemaCollector {
     );
     const overflow = children.length > MAX_NODES_PER_LEVEL;
     if (overflow) {
-      children.sort((a, b) => (b.complexityScore || 0) - (a.complexityScore || 0));
+      children.sort((a, b) => (b.complexity || 0) - (a.complexity || 0));
       children = children.slice(0, MAX_NODES_PER_LEVEL);
     }
 
@@ -566,7 +566,7 @@ export class SchemaCollector {
       hasTransformation: false,
       fieldMappings: [],
       modifiers: (entity.metadata.modifiers as string[]) || [],
-      complexityScore: entity.complexityScore,
+      complexityScore: entity.complexity,
     };
   }
 

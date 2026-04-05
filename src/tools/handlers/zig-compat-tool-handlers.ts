@@ -142,7 +142,7 @@ export class BatchModifyToolHandler extends BaseToolHandler<z.infer<typeof Batch
     // Apply filters
     let filtered = entities;
     if (where.min_complexity) {
-      filtered = filtered.filter((e) => (e.complexityScore ?? 0) >= where.min_complexity!);
+      filtered = filtered.filter((e) => (e.complexity ?? 0) >= where.min_complexity!);
     }
 
     const changes = filtered.slice(0, args.max_changes).map((entity) => ({
@@ -416,7 +416,7 @@ export class GenerateOnboardingToolHandler extends BaseToolHandler<z.infer<typeo
     // Score entities by importance: complexity + relationships
     const scored = entities
       .filter((e) => e.type === "function" || e.type === "class" || e.type === "method")
-      .map((e) => ({ name: e.name, file: e.filePath, type: e.type, score: e.complexityScore ?? 1 }))
+      .map((e) => ({ name: e.name, file: e.filePath, type: e.type, score: e.complexity ?? 1 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, maxSteps);
 

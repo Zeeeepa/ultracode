@@ -108,11 +108,9 @@ export interface Entity {
   };
   createdAt: number;
   updatedAt: number;
-  complexityScore?: number | undefined;
+  complexity?: number | undefined;
   language?: string | undefined;
-  sizeBytes?: number | undefined;
-  embeddingBase64?: string | undefined;
-  embeddingText?: string | undefined;
+  size?: number | undefined;
 }
 
 export interface Relationship {
@@ -151,7 +149,7 @@ export interface EntityQuery {
     | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
-  /** When true, exclude heavy columns (embedding_text, embedding_base64) to reduce memory */
+  /** When true, use lightweight query (fewer columns) */
   lightweight?: boolean | undefined;
 }
 
@@ -273,11 +271,10 @@ export interface PoolStats {
 }
 
 export interface PerformanceMetric {
-  id: string;
-  operation: string;
+  id: number;
+  toolName: string;
   durationMs: number;
-  entityCount?: number | undefined;
-  memoryUsage?: number | undefined;
+  success?: number | undefined;
   createdAt: number;
 }
 
@@ -403,8 +400,6 @@ export function parsedEntityToEntity(
     location: parsed.location,
     metadata: meta,
     language: parsed.language,
-    embeddingBase64: parsed.embeddingBase64,
-    embeddingText: parsed.embeddingText,
   };
 }
 

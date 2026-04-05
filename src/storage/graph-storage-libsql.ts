@@ -120,9 +120,9 @@ export class GraphStorageLibSQL implements GraphStorage {
     const entityWithId: Entity = {
       ...entity,
       id,
-      complexityScore: entity.complexityScore ?? this.calculateComplexity(entity),
+      complexity: entity.complexity ?? this.calculateComplexity(entity),
       language: entity.language ?? this.detectLanguage(entity.filePath),
-      sizeBytes: entity.sizeBytes ?? 0,
+      size: entity.size ?? 0,
       createdAt: entity.createdAt || now,
       updatedAt: entity.updatedAt || now,
     };
@@ -150,9 +150,9 @@ export class GraphStorageLibSQL implements GraphStorage {
     const entitiesWithIds = unique.map((entity) => ({
       ...entity,
       id: this.stableEntityId(entity),
-      complexityScore: entity.complexityScore ?? this.calculateComplexity(entity),
+      complexity: entity.complexity ?? this.calculateComplexity(entity),
       language: entity.language ?? this.detectLanguage(entity.filePath),
-      sizeBytes: entity.sizeBytes ?? 0,
+      size: entity.size ?? 0,
       createdAt: entity.createdAt || now,
       updatedAt: entity.updatedAt || now,
     }));
@@ -172,7 +172,7 @@ export class GraphStorageLibSQL implements GraphStorage {
       ...existing,
       ...updates,
       updatedAt: Date.now(),
-      complexityScore: updates.complexityScore ?? this.calculateComplexity({ ...existing, ...updates }),
+      complexity: updates.complexity ?? this.calculateComplexity({ ...existing, ...updates }),
       language: updates.language ?? this.detectLanguage(updates.filePath || existing.filePath),
     };
 

@@ -24,29 +24,33 @@ export type ProllyNodeType = "internal" | "leaf" | "file_tree";
  * A node in the Prolly Tree (content-addressed)
  */
 export interface ProllyNode {
-  /** Content hash (xxHash64) - serves as the node's identity */
+  /** Content hash (xxHash64) - serves as the node's identity. Maps to `id` in Zig schema. */
   contentHash: string;
 
   /** Type of node: internal (branch), leaf (data), or file_tree (for FS Merkle) */
   type: ProllyNodeType;
 
-  /** For leaf nodes: serialized data (CBOR encoded) */
+  /** For leaf nodes: serialized data (CBOR encoded). In-memory representation. */
   data?: Uint8Array | undefined;
 
   /** For internal nodes: ordered list of child content hashes */
   childrenHashes?: string[] | undefined;
 
-  /** B-tree key range: start key (inclusive) */
+  /** Tree level: 0 = leaf, >0 = internal. Maps to `level` in Zig schema. */
+  level: number;
+
+  /** Content hash for integrity verification. Maps to `hash` in Zig schema. */
+  hash: string;
+
+  // ── In-memory only (not stored in Zig schema) ──
+  /** B-tree key range: start key (inclusive). Computed in memory, not persisted. */
   keyRangeStart?: string | undefined;
-
-  /** B-tree key range: end key (inclusive) */
+  /** B-tree key range: end key (inclusive). Computed in memory, not persisted. */
   keyRangeEnd?: string | undefined;
-
-  /** Number of entries in this subtree (for statistics) */
+  /** Number of entries in this subtree. Computed in memory, not persisted. */
   entryCount?: number | undefined;
-
-  /** Timestamp when node was created */
-  createdAt: number;
+  /** Timestamp when node was created. Not in Zig schema. */
+  createdAt?: number | undefined;
 }
 
 /**
@@ -90,7 +94,7 @@ export interface InternalNodeData {
  * A commit represents a snapshot of the graph at a point in time
  */
 export interface GraphCommit {
-  /** Commit hash (xxHash64 of parent + root + timestamp) */
+  /** Commit ID (xxHash64). Maps to `id` in Zig schema. */
   commitHash: string;
 
   /** Project hash for isolation */
@@ -99,23 +103,14 @@ export interface GraphCommit {
   /** Branch name */
   branchName: string;
 
-  /** Parent commit hash (null for initial commit) */
+  /** Parent commit ID (null for initial commit). Maps to `parent_id` in Zig. */
   parentHash: string | null;
 
-  /** Root node hash of the Prolly Tree */
+  /** Root node ID of the Prolly Tree. Maps to `root_id` in Zig. */
   rootNodeHash: string;
-
-  /** Root hash of the file system Merkle tree */
-  fileTreeHash: string | null;
 
   /** Optional commit message */
   message?: string | undefined;
-
-  /** Number of entities in this commit */
-  entityCount: number;
-
-  /** Number of relationships in this commit */
-  relationshipCount: number;
 
   /** Timestamp when commit was created */
   createdAt: number;

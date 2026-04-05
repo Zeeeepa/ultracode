@@ -2,7 +2,7 @@
  * Semantic Validator — Embedding similarity validation for structural candidates
  *
  * For each structural candidate:
- * 1. Get entity embedding (from stored embeddingBase64 or generate on-the-fly)
+ * 1. Get entity embedding (generate on-the-fly; embeddings cached in cache.db)
  * 2. Compare with pattern exemplars via cosine similarity
  * 3. Compute combinedScore: structural * 0.4 + semantic * 0.6
  * 4. For structural-only (minSemanticSimilarity: 0): skip, combinedScore = structural
@@ -121,31 +121,10 @@ export class SemanticValidator {
   }
 
   private async getEntityEmbedding(candidate: StructuralCandidate): Promise<Float32Array | null> {
-    // Try stored embedding first
-    const base64 = candidate.entity.embeddingBase64;
-    if (base64) {
-      try {
-        const buffer = Buffer.from(base64, "base64");
-        // Safety: ensure alignment and valid length for Float32Array
-        const byteLen = buffer.byteLength;
-        if (byteLen < 4 || byteLen % 4 !== 0) {
-          log.w("SEMANTIC_VALIDATOR", "invalid_embedding_size", { entity: candidate.entity.id, byteLen });
-          return null;
-        }
-        // Copy to aligned buffer to avoid potential SIGBUS on unaligned access
-        const aligned = new ArrayBuffer(byteLen);
-        new Uint8Array(aligned).set(new Uint8Array(buffer.buffer, buffer.byteOffset, byteLen));
-        return new Float32Array(aligned);
-      } catch (err) {
-        log.w("SEMANTIC_VALIDATOR", "embedding_decode_error", { entity: candidate.entity.id, error: String(err) });
-        return null;
-      }
-    }
-
-    // Generate on-the-fly
+    // Generate on-the-fly (embeddings are now stored in cache.db, not on Entity)
     if (this.embeddingGen) {
       try {
-        const text = candidate.entity.embeddingText ?? candidate.entity.name;
+        const text = candidate.entity.name;
         const language = candidate.entity.language ?? (candidate.entity.metadata?.language as string | undefined);
         return await this.embeddingGen.generateCodeEmbedding(text, language);
       } catch (err) {

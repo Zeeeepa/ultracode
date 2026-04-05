@@ -188,7 +188,7 @@ export class MetadataOperations {
   /**
    * Update project metadata after indexing
    */
-  async updateProjectMetadata(projectPath: string, isFullIndex = false): Promise<void> {
+  async updateProjectMetadata(_projectPath: string, _isFullIndex = false): Promise<void> {
     return this._w(async () => {
       const client = this.getClient();
       if (!client) throw new Error("Client not initialized");
@@ -196,7 +196,7 @@ export class MetadataOperations {
       const { projectHash, branchName } = this.getContext();
       const now = Date.now();
 
-      // Count entities (active generation only) and files
+      // Count entities (active generation only), files and relationships
       const entityCount = await client.execute({
         sql: `SELECT COUNT(*) as count FROM entities e
             JOIN file_generations fg
@@ -208,42 +208,36 @@ export class MetadataOperations {
         sql: "SELECT COUNT(*) as count FROM files WHERE project_hash = ? AND branch_name = ?",
         args: [projectHash, branchName],
       });
-
-      // Get existing tracking data to preserve it (or reset if full index)
-      const existing = await client.execute({
-        sql: `SELECT last_full_index_at, incremental_changes_count, created_at, trace_usage_count
-            FROM project_metadata WHERE project_hash = ? AND branch_name = ?`,
+      const relCount = await client.execute({
+        sql: "SELECT COUNT(*) as count FROM relationships WHERE project_hash = ? AND branch_name = ?",
         args: [projectHash, branchName],
       });
 
-      const existingRow = existing.rows[0];
-      const createdAt = (existingRow?.["created_at"] as number) || now;
-      const traceUsageCount = (existingRow?.["trace_usage_count"] as number) || 0;
+      // Get existing created_at to preserve it
+      const existing = await client.execute({
+        sql: `SELECT created_at FROM project_metadata WHERE project_hash = ? AND branch_name = ?`,
+        args: [projectHash, branchName],
+      });
+      const createdAt = (existing.rows[0]?.["created_at"] as number) || now;
 
-      // On full index: reset counter and update last_full_index_at
-      // On incremental: preserve existing values
-      const lastFullIndexAt = isFullIndex ? now : (existingRow?.["last_full_index_at"] as number) || 0;
-      const incrementalChangesCount = isFullIndex ? 0 : (existingRow?.["incremental_changes_count"] as number) || 0;
-
+      // Zig-compatible schema: project_hash, branch_name, entity_count, file_count,
+      // relationship_count, last_indexed, created_at, updated_at
       await client.execute({
         sql: `
         INSERT OR REPLACE INTO project_metadata
-        (project_hash, branch_name, project_path, last_indexed_at, entity_count, file_count,
-         created_at, updated_at, last_full_index_at, incremental_changes_count, trace_usage_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (project_hash, branch_name, entity_count, file_count, relationship_count,
+         last_indexed, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
         args: [
           projectHash,
           branchName,
-          projectPath,
-          now,
           (entityCount.rows[0]?.["count"] as number) || 0,
           (fileCount.rows[0]?.["count"] as number) || 0,
+          (relCount.rows[0]?.["count"] as number) || 0,
+          now,
           createdAt,
           now,
-          lastFullIndexAt,
-          incrementalChangesCount,
-          traceUsageCount,
         ],
       });
     }); // end _w
@@ -263,7 +257,7 @@ export class MetadataOperations {
     const { projectHash, branchName } = this.getContext();
 
     const result = await client.execute({
-      sql: `SELECT last_full_index_at, incremental_changes_count, file_count
+      sql: `SELECT last_indexed, file_count
             FROM project_metadata WHERE project_hash = ? AND branch_name = ?`,
       args: [projectHash, branchName],
     });
@@ -274,16 +268,16 @@ export class MetadataOperations {
 
     const row = result.rows[0]!;
     return {
-      lastFullIndexAt: (row["last_full_index_at"] as number) || 0,
-      incrementalChangesCount: (row["incremental_changes_count"] as number) || 0,
+      lastFullIndexAt: (row["last_indexed"] as number) || 0,
+      incrementalChangesCount: 0, // No longer tracked in Zig-compatible schema
       totalFiles: (row["file_count"] as number) || 0,
     };
   }
 
   /**
-   * Record incremental file changes (called after each incremental update)
+   * Record incremental file changes — updates last_indexed timestamp
    */
-  async recordIncrementalChanges(changedFileCount: number): Promise<void> {
+  async recordIncrementalChanges(_changedFileCount: number): Promise<void> {
     return this._w(async () => {
       const client = this.getClient();
       if (!client) throw new Error("Client not initialized");
@@ -292,16 +286,15 @@ export class MetadataOperations {
 
       await client.execute({
         sql: `UPDATE project_metadata
-            SET incremental_changes_count = incremental_changes_count + ?,
-                updated_at = ?
+            SET updated_at = ?
             WHERE project_hash = ? AND branch_name = ?`,
-        args: [changedFileCount, Date.now(), projectHash, branchName],
+        args: [Date.now(), projectHash, branchName],
       });
     }); // end _w
   }
 
   /**
-   * Reset incremental tracking (called after full index)
+   * Reset incremental tracking (updates last_indexed)
    */
   async resetIncrementalTracking(): Promise<void> {
     return this._w(async () => {
@@ -313,8 +306,7 @@ export class MetadataOperations {
 
       await client.execute({
         sql: `UPDATE project_metadata
-            SET last_full_index_at = ?,
-                incremental_changes_count = 0,
+            SET last_indexed = ?,
                 updated_at = ?
             WHERE project_hash = ? AND branch_name = ?`,
         args: [now, now, projectHash, branchName],
@@ -330,50 +322,19 @@ export class MetadataOperations {
    * Get trace tool usage count for current project/branch.
    * Used by graph-cache to decide whether to preload the Graphology graph.
    */
+  /**
+   * Get trace tool usage count — no longer stored in DB (Zig-compat).
+   * Always returns 1 to indicate "trace has been used" so graph preloading works.
+   */
   async getTraceUsageCount(): Promise<number> {
-    const client = this.getClient();
-    if (!client) return 0;
-
-    const { projectHash, branchName } = this.getContext();
-
-    try {
-      const result = await client.execute({
-        sql: `SELECT trace_usage_count FROM project_metadata
-              WHERE project_hash = ? AND branch_name = ?`,
-        args: [projectHash, branchName],
-      });
-
-      return (result.rows[0]?.["trace_usage_count"] as number) || 0;
-    } catch {
-      // Column may not exist yet (pre-migration)
-      return 0;
-    }
+    return 1;
   }
 
   /**
-   * Increment trace tool usage counter for current project/branch.
-   * Called on each trace_flow / trace_backwards invocation.
+   * Increment trace tool usage counter — no-op in Zig-compatible schema.
    */
   async incrementTraceUsageCount(): Promise<void> {
-    return this._w(async () => {
-      const client = this.getClient();
-      if (!client) return;
-
-      const { projectHash, branchName } = this.getContext();
-
-      try {
-        await client.execute({
-          sql: `INSERT INTO project_metadata
-              (project_hash, branch_name, project_path, last_indexed_at, created_at, updated_at, trace_usage_count)
-              VALUES (?, ?, '', 0, 0, 0, 1)
-              ON CONFLICT(project_hash, branch_name) DO UPDATE
-              SET trace_usage_count = COALESCE(trace_usage_count, 0) + 1`,
-          args: [projectHash, branchName],
-        });
-      } catch {
-        // Column may not exist yet (pre-migration) — non-critical
-      }
-    }); // end _w
+    // No longer tracked in Zig-compatible schema
   }
 
   /**
@@ -393,7 +354,7 @@ export class MetadataOperations {
     if (!client) throw new Error("Client not initialized");
 
     const result = await client.execute(`
-      SELECT project_hash, branch_name, project_path, last_indexed_at, entity_count, file_count
+      SELECT project_hash, branch_name, last_indexed, entity_count, file_count
       FROM project_metadata
       ORDER BY updated_at DESC
     `);
@@ -401,8 +362,8 @@ export class MetadataOperations {
     return result.rows.map((r) => ({
       projectHash: r["project_hash"] as string,
       branchName: r["branch_name"] as string,
-      projectPath: r["project_path"] as string,
-      lastIndexedAt: r["last_indexed_at"] as number,
+      projectPath: "", // No longer stored in Zig-compatible schema
+      lastIndexedAt: r["last_indexed"] as number,
       entityCount: r["entity_count"] as number,
       fileCount: r["file_count"] as number,
     }));
@@ -460,15 +421,9 @@ export class MetadataOperations {
               WHERE e.project_hash = ? AND e.file_gen = fg.active_gen AND e.${branchFilter}`,
         args: [projectHash, ...branchArgs],
       }),
+      // Simple COUNT — no EXISTS subquery (Zig-compatible, avoids O(n²) scan)
       client.execute({
-        sql: `SELECT COUNT(*) as cnt FROM relationships r
-              WHERE r.project_hash = ? AND r.${branchFilter}
-              AND EXISTS (
-                SELECT 1 FROM entities e
-                JOIN file_generations fg
-                  ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-                WHERE e.id = r.from_id AND e.file_gen = fg.active_gen
-              )`,
+        sql: `SELECT COUNT(*) as cnt FROM relationships WHERE project_hash = ? AND ${branchFilter}`,
         args: [projectHash, ...branchArgs],
       }),
       client.execute({

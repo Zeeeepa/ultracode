@@ -1,5 +1,7 @@
 # Detectors
 
+Language-specific code pattern detectors for identifying anti-patterns across TypeScript, C#, Go, Java, Python, and Zig
+
 ## Overview
 
 This module provides a collection of language-specific detector functions that identify anti-patterns, code quality issues, and problematic design patterns across TypeScript, Python, C#, Go, and Java codebases. Each detector examines code entities (functions, classes, constructors) by analyzing their metadata (metrics, modifiers, complexity, nesting depth) and returns a standardized result indicating whether the pattern matches, along with a confidence score. Detectors are organized by language to capture language-specific concerns—such as async/void in C# and TypeScript, goroutine leaks in Go, or mutable statics in Java—while common detectors (god functions, deep nesting, missing documentation) apply across all languages.

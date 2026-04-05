@@ -42,8 +42,8 @@ export class TimeTravelManager {
 
     return {
       commit,
-      entityCount: commit.entityCount,
-      relationshipCount: commit.relationshipCount,
+      entityCount: 0, // No longer stored in Zig-compatible commits
+      relationshipCount: 0,
       fileCount: 0, // Would need file Merkle tree to get this
     };
   }

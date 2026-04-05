@@ -152,9 +152,9 @@ export class EntityOperations {
       await client.execute({
         sql: `
         INSERT OR REPLACE INTO entities
-        (id, project_hash, branch_name, name, type, file_path, location, metadata, hash,
-         created_at, updated_at, complexity_score, language, size_bytes, embedding_base64, embedding_text, file_gen)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, project_hash, branch_name, name, type, file_path, location, language, metadata, hash,
+         complexity, size, is_async, is_exported, is_test, has_docs, file_gen, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         args: [
           entity.id,
@@ -163,17 +163,19 @@ export class EntityOperations {
           entity.name,
           entity.type,
           entity.filePath,
-          JSON.stringify(entity.location),
+          compactLocation(entity.location),
+          entity.language || "",
           encodeMetadata(entity.metadata as Record<string, unknown>),
-          entity.hash || null,
+          entity.hash || "",
+          entity.complexity ?? 0,
+          entity.size ?? 0,
+          0, // is_async
+          0, // is_exported
+          0, // is_test
+          0, // has_docs
+          newGen,
           entity.createdAt || now,
           entity.updatedAt || now,
-          entity.complexityScore || 1,
-          entity.language || null,
-          entity.sizeBytes || 0,
-          entity.embeddingBase64 || null,
-          entity.embeddingText || null,
-          newGen,
         ],
       });
 
@@ -242,8 +244,8 @@ export class EntityOperations {
 
       // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
       // Much faster than N separate INSERT statements (reduces parsing overhead)
-      // SQLite limit: ~32767 params, 17 fields per entity → batch 1500 = 25500 params (safe, max 1928)
-      const batchSize = 1500;
+      // SQLite limit: ~32767 params, 19 fields per entity → batch 1700 = 32300 params (safe)
+      const batchSize = 1700;
 
       let processed = 0;
 
@@ -259,8 +261,10 @@ export class EntityOperations {
       for (let i = 0; i < unique.length; i += batchSize) {
         const batch = unique.slice(i, i + batchSize);
 
-        // Build multi-row VALUES clause
-        const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+        // Build multi-row VALUES clause (19 fields per entity)
+        const valuePlaceholders = batch
+          .map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .join(", ");
 
         // Flatten all args into single array
         const args: (string | number | Buffer | null)[] = [];
@@ -274,23 +278,25 @@ export class EntityOperations {
             entity.type,
             entity.filePath,
             compactLocation(entity.location),
+            entity.language || "",
             encodeMetadata(entity.metadata as Record<string, unknown>),
-            entity.hash || null,
+            entity.hash || "",
+            entity.complexity ?? 0,
+            entity.size ?? 0,
+            0, // is_async
+            0, // is_exported
+            0, // is_test
+            0, // has_docs
+            fileGen,
             entity.createdAt || now,
             entity.updatedAt || now,
-            entity.complexityScore || 1,
-            entity.language || null,
-            entity.sizeBytes || 0,
-            entity.embeddingBase64 || null,
-            entity.embeddingText || null,
-            fileGen,
           );
         }
 
         allStatements.push({
           sql: `${insertVerb} ${entityTable}
-        (id, project_hash, branch_name, name, type, file_path, location, metadata, hash,
-         created_at, updated_at, complexity_score, language, size_bytes, embedding_base64, embedding_text, file_gen)
+        (id, project_hash, branch_name, name, type, file_path, location, language, metadata, hash,
+         complexity, size, is_async, is_exported, is_test, has_docs, file_gen, created_at, updated_at)
         VALUES ${valuePlaceholders}`,
           args,
         });
@@ -618,12 +624,11 @@ export class EntityOperations {
     const limit = query.limit || 100;
     const offset = query.offset || 0;
 
-    // Lightweight mode: exclude heavy columns (embedding_text ~60MB, embedding_base64 ~60MB for 15K entities)
+    // Lightweight mode: select only essential columns
     const selectCols = query.lightweight
-      ? `e.id, e.name, e.type, e.file_path, e.location, e.metadata, e.hash,
-         e.created_at, e.updated_at, e.complexity_score, e.language,
-         e.size_bytes, e.file_gen, e.project_hash, e.branch_name,
-         NULL as embedding_base64, NULL as embedding_text`
+      ? `e.id, e.name, e.type, e.file_path, e.location, e.language, e.metadata, e.hash,
+         e.complexity, e.size, e.file_gen, e.project_hash, e.branch_name,
+         e.created_at, e.updated_at`
       : "e.*";
 
     // Simple case: no base branch

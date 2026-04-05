@@ -64,98 +64,108 @@ export class SchemaManager {
    * tombstones, name_tokens, project_metadata + indexes
    */
   async createGraphTables(client: Client): Promise<void> {
+    // ── Zig-compatible schema (synced with ultracode.zig/src/storage/schema.zig) ──
+    // Key design: implicit integer rowid + droppable UNIQUE INDEX (not PK).
+    // This enables DROP INDEX during bulk insert for zero constraint checking,
+    // then CREATE INDEX after — using SQLite Sorter for fast index rebuild.
     await client.batch(
       [
+        // entities: implicit rowid for BTREE_APPEND optimization
         `CREATE TABLE IF NOT EXISTS entities (
         id TEXT NOT NULL,
-        project_hash TEXT NOT NULL DEFAULT 'legacy',
-        branch_name TEXT NOT NULL DEFAULT 'main',
+        project_hash TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
         name TEXT NOT NULL,
         type TEXT NOT NULL,
         file_path TEXT NOT NULL,
-        location TEXT NOT NULL,
+        location TEXT DEFAULT '',
+        language TEXT DEFAULT '',
         metadata BLOB,
-        hash TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        complexity_score INTEGER DEFAULT 1,
-        language TEXT,
-        size_bytes INTEGER DEFAULT 0,
-        embedding_base64 TEXT,
-        embedding_text TEXT,
-        file_gen INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY (id, project_hash, branch_name)
+        hash TEXT DEFAULT '',
+        complexity INTEGER DEFAULT 0,
+        size INTEGER DEFAULT 0,
+        is_async INTEGER DEFAULT 0,
+        is_exported INTEGER DEFAULT 0,
+        is_test INTEGER DEFAULT 0,
+        has_docs INTEGER DEFAULT 0,
+        file_gen INTEGER DEFAULT 1,
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0
       )`,
+        // relationships: implicit rowid + droppable UNIQUE INDEX
         `CREATE TABLE IF NOT EXISTS relationships (
         id TEXT NOT NULL,
-        project_hash TEXT NOT NULL DEFAULT 'legacy',
-        branch_name TEXT NOT NULL DEFAULT 'main',
+        project_hash TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
         from_id TEXT NOT NULL,
         to_id TEXT NOT NULL,
         type TEXT NOT NULL,
-        metadata BLOB,
+        file_path TEXT DEFAULT '',
         weight REAL DEFAULT 1.0,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (id, project_hash, branch_name)
+        metadata BLOB,
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0
       )`,
         `CREATE TABLE IF NOT EXISTS files (
         path TEXT NOT NULL,
-        project_hash TEXT NOT NULL DEFAULT 'legacy',
-        branch_name TEXT NOT NULL DEFAULT 'main',
-        hash TEXT,
-        last_indexed INTEGER NOT NULL,
+        project_hash TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
+        hash TEXT DEFAULT '',
+        last_indexed INTEGER DEFAULT 0,
         entity_count INTEGER DEFAULT 0,
+        size INTEGER DEFAULT 0,
+        language TEXT DEFAULT '',
         PRIMARY KEY (path, project_hash, branch_name)
       )`,
         `CREATE TABLE IF NOT EXISTS project_metadata (
         project_hash TEXT NOT NULL,
-        branch_name TEXT NOT NULL DEFAULT 'main',
-        project_path TEXT NOT NULL,
-        last_indexed_at INTEGER NOT NULL,
+        branch_name TEXT NOT NULL,
         entity_count INTEGER DEFAULT 0,
         file_count INTEGER DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        last_full_index_at INTEGER DEFAULT 0,
-        incremental_changes_count INTEGER DEFAULT 0,
-        trace_usage_count INTEGER DEFAULT 0,
+        relationship_count INTEGER DEFAULT 0,
+        last_indexed INTEGER DEFAULT 0,
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
         PRIMARY KEY (project_hash, branch_name)
       )`,
         `CREATE TABLE IF NOT EXISTS tombstones (
         entity_id TEXT NOT NULL,
         project_hash TEXT NOT NULL,
         branch_name TEXT NOT NULL,
-        entity_type TEXT NOT NULL DEFAULT 'entity',
-        deleted_at INTEGER NOT NULL,
+        entity_type TEXT NOT NULL,
+        created_at INTEGER DEFAULT 0,
         PRIMARY KEY (entity_id, project_hash, branch_name, entity_type)
       )`,
         `CREATE TABLE IF NOT EXISTS file_generations (
         file_path TEXT NOT NULL,
         project_hash TEXT NOT NULL,
         branch_name TEXT NOT NULL,
-        active_gen INTEGER NOT NULL DEFAULT 1,
-        updated_at INTEGER NOT NULL,
+        active_gen INTEGER DEFAULT 1,
         PRIMARY KEY (file_path, project_hash, branch_name)
       )`,
+        // name_tokens: implicit rowid + droppable UNIQUE INDEX
         `CREATE TABLE IF NOT EXISTS name_tokens (
         token TEXT NOT NULL,
         entity_id TEXT NOT NULL,
         project_hash TEXT NOT NULL,
         branch_name TEXT NOT NULL,
-        PRIMARY KEY (token, entity_id, project_hash, branch_name)
+        source TEXT DEFAULT 'name'
       )`,
-        // Indexes
-        `CREATE INDEX IF NOT EXISTS idx_entities_project_branch ON entities(project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_entities_file_path ON entities(file_path, project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type, project_hash, branch_name)`,
+        // ── Indexes (droppable UNIQUE INDEX for entities/relationships/name_tokens) ──
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_pk ON entities(id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_entities_file ON entities(file_path, project_hash, branch_name)`,
         `CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name, project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_relationships_project_branch ON relationships(project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_relationships_from ON relationships(from_id, project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_relationships_to ON relationships(to_id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_entities_gen ON entities(file_gen, file_path, project_hash, branch_name)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_rels_pk ON relationships(id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_rels_from ON relationships(from_id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_rels_to ON relationships(to_id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_rels_file ON relationships(file_path, project_hash, branch_name)`,
         `CREATE INDEX IF NOT EXISTS idx_files_project_branch ON files(project_hash, branch_name)`,
         `CREATE INDEX IF NOT EXISTS idx_tombstones_lookup ON tombstones(project_hash, branch_name, entity_type)`,
-        `CREATE INDEX IF NOT EXISTS idx_name_tokens_lookup ON name_tokens(token, project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_entities_file_gen ON entities(file_path, project_hash, branch_name, file_gen)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_pk ON name_tokens(token, entity_id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_tokens_entity ON name_tokens(entity_id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_tokens_lookup ON name_tokens(token, project_hash, branch_name, source)`,
         // Crash safety: drop leftover staging tables from previous crash
         `DROP TABLE IF EXISTS _staging_entities`,
         `DROP TABLE IF EXISTS _staging_relationships`,
@@ -165,57 +175,7 @@ export class SchemaManager {
       "write",
     );
 
-    // ── Zig-compat columns (added via ALTER TABLE for existing DBs) ────────
-    // These are new columns from the Zig schema that don't exist in the
-    // original TS schema. ALTER TABLE ADD COLUMN is safe — SQLite fills
-    // existing rows with the DEFAULT value automatically.
-    const zigCompatColumns: Array<{ table: string; column: string; ddl: string }> = [
-      // entities: explicit boolean flags (Zig stores as INTEGER, not in CBOR metadata)
-      { table: "entities", column: "is_async", ddl: "ALTER TABLE entities ADD COLUMN is_async INTEGER DEFAULT 0" },
-      {
-        table: "entities",
-        column: "is_exported",
-        ddl: "ALTER TABLE entities ADD COLUMN is_exported INTEGER DEFAULT 0",
-      },
-      { table: "entities", column: "is_test", ddl: "ALTER TABLE entities ADD COLUMN is_test INTEGER DEFAULT 0" },
-      { table: "entities", column: "has_docs", ddl: "ALTER TABLE entities ADD COLUMN has_docs INTEGER DEFAULT 0" },
-      // relationships: file_path for provenance tracking
-      {
-        table: "relationships",
-        column: "file_path",
-        ddl: "ALTER TABLE relationships ADD COLUMN file_path TEXT DEFAULT ''",
-      },
-      {
-        table: "relationships",
-        column: "updated_at",
-        ddl: "ALTER TABLE relationships ADD COLUMN updated_at INTEGER DEFAULT 0",
-      },
-      // files: size and language for richer file metadata
-      { table: "files", column: "size", ddl: "ALTER TABLE files ADD COLUMN size INTEGER DEFAULT 0" },
-      { table: "files", column: "language", ddl: "ALTER TABLE files ADD COLUMN language TEXT DEFAULT ''" },
-      // name_tokens: source column (name, doc, etc.)
-      { table: "name_tokens", column: "source", ddl: "ALTER TABLE name_tokens ADD COLUMN source TEXT DEFAULT 'name'" },
-      // project_metadata: relationship count
-      {
-        table: "project_metadata",
-        column: "relationship_count",
-        ddl: "ALTER TABLE project_metadata ADD COLUMN relationship_count INTEGER DEFAULT 0",
-      },
-    ];
-
-    for (const { table, column, ddl } of zigCompatColumns) {
-      try {
-        await client.execute(ddl);
-      } catch (e) {
-        // "duplicate column" means it already exists — expected for subsequent runs
-        const msg = (e as Error).message || "";
-        if (!msg.includes("duplicate column")) {
-          log.w("SCHEMA", `alter_table_failed`, { table, column, err: msg });
-        }
-      }
-    }
-
-    // ── FTS5 virtual table for full-text entity search (Zig compat) ────────
+    // ── FTS5 virtual table for full-text entity search ────────────────────
     try {
       await client.execute(
         `CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(entity_id UNINDEXED, name, file_path)`,
@@ -224,45 +184,35 @@ export class SchemaManager {
       // FTS5 may not be available in all SQLite builds
       log.w("SCHEMA", "fts5_create_failed", { err: (e as Error).message });
     }
-
-    // ── Index for relationships.file_path ──────────────────────────────────
-    try {
-      await client.execute(
-        `CREATE INDEX IF NOT EXISTS idx_relationships_file ON relationships(file_path, project_hash, branch_name)`,
-      );
-    } catch {
-      // Column may not exist on very old DBs
-    }
   }
 
   /**
    * Create semantic tables: cooccurrence, term_frequency + indexes
    */
   async createSemanticTables(client: Client): Promise<void> {
+    // ── Zig-compatible schema (synced with ultracode.zig/src/storage/schema.zig) ──
+    // cooccurrence + term_frequency: implicit rowid + droppable UNIQUE INDEX
     await client.batch(
       [
         `CREATE TABLE IF NOT EXISTS cooccurrence (
           term1 TEXT NOT NULL,
           term2 TEXT NOT NULL,
-          count INTEGER NOT NULL DEFAULT 1,
-          pmi REAL,
           project_hash TEXT NOT NULL,
-          branch_name TEXT NOT NULL DEFAULT 'main',
-          updated_at INTEGER NOT NULL,
-          PRIMARY KEY (term1, term2, project_hash, branch_name)
+          branch_name TEXT NOT NULL,
+          count INTEGER DEFAULT 1
         )`,
         `CREATE TABLE IF NOT EXISTS term_frequency (
           term TEXT NOT NULL,
-          doc_count INTEGER NOT NULL DEFAULT 1,
-          total_count INTEGER NOT NULL DEFAULT 1,
+          entity_id TEXT NOT NULL,
           project_hash TEXT NOT NULL,
-          branch_name TEXT NOT NULL DEFAULT 'main',
-          PRIMARY KEY (term, project_hash, branch_name)
+          branch_name TEXT NOT NULL,
+          frequency REAL DEFAULT 0.0
         )`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_cooc_pk ON cooccurrence(term1, term2, project_hash, branch_name)`,
         `CREATE INDEX IF NOT EXISTS idx_cooc_term1 ON cooccurrence(term1, project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_cooc_pmi ON cooccurrence(pmi DESC, project_hash, branch_name)`,
-        `CREATE INDEX IF NOT EXISTS idx_term_freq_project ON term_frequency(project_hash, branch_name)`,
-        // Zig-compat: meta table for key-value storage in semantic.db
+        `CREATE INDEX IF NOT EXISTS idx_cooc_term2 ON cooccurrence(term2, project_hash, branch_name)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_tf_pk ON term_frequency(term, entity_id, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_tf_term ON term_frequency(term, project_hash, branch_name)`,
         `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
       ],
       "write",
@@ -282,46 +232,29 @@ export class SchemaManager {
    * Create cache tables: embedding_cache, query_cache, performance_metrics
    */
   async createCacheTables(client: Client): Promise<void> {
+    // ── Zig-compatible schema (synced with ultracode.zig/src/storage/schema.zig) ──
     await client.batch(
       [
         `CREATE TABLE IF NOT EXISTS embedding_cache (
-          content_hash TEXT PRIMARY KEY,
-          model TEXT NOT NULL,
-          embedding BLOB NOT NULL,
-          text_preview TEXT,
-          created_at INTEGER NOT NULL,
-          last_used_at INTEGER NOT NULL,
-          hit_count INTEGER DEFAULT 0
+          key TEXT NOT NULL PRIMARY KEY,
+          embedding BLOB,
+          model TEXT DEFAULT '',
+          created_at INTEGER DEFAULT 0,
+          expires_at INTEGER DEFAULT 0
         )`,
         `CREATE TABLE IF NOT EXISTS query_cache (
-        id TEXT NOT NULL,
-        project_hash TEXT NOT NULL DEFAULT 'legacy',
-        branch_name TEXT NOT NULL DEFAULT 'main',
-        query_hash TEXT NOT NULL,
-        result TEXT NOT NULL,
-        hit_count INTEGER DEFAULT 0,
-        miss_count INTEGER DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        PRIMARY KEY (id, project_hash, branch_name)
+        query_hash TEXT NOT NULL PRIMARY KEY,
+        result TEXT,
+        created_at INTEGER DEFAULT 0,
+        expires_at INTEGER DEFAULT 0
       )`,
         `CREATE TABLE IF NOT EXISTS performance_metrics (
-        id TEXT PRIMARY KEY,
-        operation TEXT NOT NULL,
-        duration_ms INTEGER NOT NULL,
-        entity_count INTEGER DEFAULT 0,
-        memory_usage INTEGER DEFAULT 0,
-        created_at INTEGER NOT NULL
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool_name TEXT NOT NULL,
+        duration_ms INTEGER DEFAULT 0,
+        success INTEGER DEFAULT 1,
+        created_at INTEGER DEFAULT 0
       )`,
-        // Zig-compat: git churn cache for hotspot analysis
-        `CREATE TABLE IF NOT EXISTS git_churn_cache (
-        file_path TEXT NOT NULL,
-        project_hash TEXT NOT NULL,
-        commit_hash TEXT NOT NULL DEFAULT '',
-        churn_count INTEGER DEFAULT 0,
-        PRIMARY KEY (file_path, project_hash)
-      )`,
-        // Zig-compat: metric results cache (PageRank, betweenness, etc.)
         `CREATE TABLE IF NOT EXISTS metric_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         metric_type TEXT NOT NULL,
@@ -329,6 +262,30 @@ export class SchemaManager {
         score REAL NOT NULL,
         created_at INTEGER DEFAULT 0
       )`,
+        `CREATE TABLE IF NOT EXISTS git_churn_cache (
+        file_path TEXT NOT NULL,
+        project_hash TEXT NOT NULL,
+        commit_hash TEXT NOT NULL,
+        churn_count INTEGER DEFAULT 0,
+        PRIMARY KEY (file_path, project_hash)
+      )`,
+        // Hypothesis inference system (Zig: src/hypothesis/)
+        `CREATE TABLE IF NOT EXISTS hypotheses (
+        id TEXT NOT NULL PRIMARY KEY,
+        project_hash TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
+        from_id TEXT NOT NULL,
+        to_id TEXT NOT NULL,
+        hypothesis_type TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        rel_type TEXT NOT NULL,
+        evidence TEXT DEFAULT '',
+        strategy TEXT DEFAULT '',
+        created_at INTEGER DEFAULT 0
+      )`,
+        `CREATE INDEX IF NOT EXISTS idx_hyp_source ON hypotheses(project_hash, branch_name, from_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_hyp_target ON hypotheses(project_hash, branch_name, to_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_hyp_conf ON hypotheses(project_hash, branch_name, confidence DESC)`,
       ],
       "write",
     );
@@ -361,8 +318,8 @@ export class SchemaManager {
 
     // Backfill file_generations from existing entities
     await client.execute(`
-      INSERT OR IGNORE INTO file_generations (file_path, project_hash, branch_name, active_gen, updated_at)
-      SELECT DISTINCT file_path, project_hash, branch_name, 1, ${Date.now()}
+      INSERT OR IGNORE INTO file_generations (file_path, project_hash, branch_name, active_gen)
+      SELECT DISTINCT file_path, project_hash, branch_name, 1
       FROM entities
     `);
 
@@ -528,5 +485,78 @@ export class SchemaManager {
     } catch (error) {
       log.d("STORAGE", "Failed to get stats", { error: (error as Error).message });
     }
+  }
+
+  // ===========================================================================
+  // DROPPABLE INDEXES (Zig-compat: drop during bulk insert, recreate after)
+  // ===========================================================================
+
+  /** Droppable indexes for graph.db */
+  static readonly GRAPH_DROPPABLE_INDEXES = [
+    "idx_entities_pk",
+    "idx_entities_file",
+    "idx_entities_name",
+    "idx_entities_type",
+    "idx_entities_gen",
+    "idx_rels_pk",
+    "idx_rels_from",
+    "idx_rels_to",
+    "idx_rels_file",
+    "idx_tokens_pk",
+    "idx_tokens_entity",
+    "idx_tokens_lookup",
+  ];
+
+  /** Droppable indexes for semantic.db */
+  static readonly SEMANTIC_DROPPABLE_INDEXES = [
+    "idx_cooc_pk",
+    "idx_cooc_term1",
+    "idx_cooc_term2",
+    "idx_tf_pk",
+    "idx_tf_term",
+  ];
+
+  /** Drop indexes for bulk insert optimization */
+  async dropIndexes(client: Client, indexes: string[]): Promise<void> {
+    const stmts = indexes.map((idx) => `DROP INDEX IF EXISTS ${idx}`);
+    await client.batch(stmts, "write");
+    log.i("SCHEMA", "indexes_dropped", { count: indexes.length });
+  }
+
+  /** Recreate graph.db indexes after bulk insert */
+  async recreateGraphIndexes(client: Client): Promise<void> {
+    await client.batch(
+      [
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_pk ON entities(id, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_entities_file ON entities(file_path, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_entities_gen ON entities(file_gen, file_path, project_hash, branch_name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_rels_pk ON relationships(id, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_rels_from ON relationships(from_id, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_rels_to ON relationships(to_id, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_rels_file ON relationships(file_path, project_hash, branch_name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_pk ON name_tokens(token, entity_id, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_tokens_entity ON name_tokens(entity_id, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_tokens_lookup ON name_tokens(token, project_hash, branch_name, source)",
+      ],
+      "write",
+    );
+    log.i("SCHEMA", "indexes_recreated", { type: "graph" });
+  }
+
+  /** Recreate semantic.db indexes after bulk insert */
+  async recreateSemanticIndexes(client: Client): Promise<void> {
+    await client.batch(
+      [
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cooc_pk ON cooccurrence(term1, term2, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_cooc_term1 ON cooccurrence(term1, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_cooc_term2 ON cooccurrence(term2, project_hash, branch_name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tf_pk ON term_frequency(term, entity_id, project_hash, branch_name)",
+        "CREATE INDEX IF NOT EXISTS idx_tf_term ON term_frequency(term, project_hash, branch_name)",
+      ],
+      "write",
+    );
+    log.i("SCHEMA", "indexes_recreated", { type: "semantic" });
   }
 }

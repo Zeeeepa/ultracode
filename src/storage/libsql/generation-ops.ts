@@ -72,13 +72,11 @@ export class GenerationManager {
     const { projectHash, branchName } = this.getContext();
     const currentGen = this.getGeneration(filePath);
     const newGen = currentGen + 1;
-    const now = Date.now();
-
     await client.execute({
       sql: `INSERT OR REPLACE INTO file_generations
-            (file_path, project_hash, branch_name, active_gen, updated_at)
-            VALUES (?, ?, ?, ?, ?)`,
-      args: [filePath, projectHash, branchName, newGen, now],
+            (file_path, project_hash, branch_name, active_gen)
+            VALUES (?, ?, ?, ?)`,
+      args: [filePath, projectHash, branchName, newGen],
     });
 
     this.cache.set(filePath, newGen);
@@ -95,30 +93,29 @@ export class GenerationManager {
     if (filePaths.length === 0) return new Map();
 
     const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
     const result = new Map<string, number>();
 
     // Deduplicate
     const unique = [...new Set(filePaths)];
 
-    // Batch INSERT OR REPLACE (5 params per row, batch 500 = 2500 params, safe)
+    // Batch INSERT OR REPLACE (4 params per row, batch 500 = 2000 params, safe)
     const BATCH_SIZE = 500;
     for (let i = 0; i < unique.length; i += BATCH_SIZE) {
       const batch = unique.slice(i, i + BATCH_SIZE);
-      const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?)").join(", ");
+      const valuePlaceholders = batch.map(() => "(?, ?, ?, ?)").join(", ");
       const args: (string | number)[] = [];
 
       for (const filePath of batch) {
         const currentGen = this.getGeneration(filePath);
         const newGen = currentGen + 1;
-        args.push(filePath, projectHash, branchName, newGen, now);
+        args.push(filePath, projectHash, branchName, newGen);
         this.cache.set(filePath, newGen);
         result.set(filePath, newGen);
       }
 
       await client.execute({
         sql: `INSERT OR REPLACE INTO file_generations
-              (file_path, project_hash, branch_name, active_gen, updated_at)
+              (file_path, project_hash, branch_name, active_gen)
               VALUES ${valuePlaceholders}`,
         args,
       });
@@ -140,9 +137,9 @@ export class GenerationManager {
 
     await client.execute({
       sql: `INSERT OR REPLACE INTO file_generations
-            (file_path, project_hash, branch_name, active_gen, updated_at)
-            VALUES (?, ?, ?, -1, ?)`,
-      args: [filePath, projectHash, branchName, Date.now()],
+            (file_path, project_hash, branch_name, active_gen)
+            VALUES (?, ?, ?, -1)`,
+      args: [filePath, projectHash, branchName],
     });
 
     this.cache.set(filePath, -1);
