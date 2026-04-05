@@ -399,7 +399,7 @@ function computeQueueBatchSize(
         : providerKind === "ovms"
           ? 200
           : providerKind === "tei"
-            ? 128 // TEI dynamic batching groups internally; larger client batches reduce HTTP round-trips
+            ? 256 // TEI: larger batches reduce HTTP round-trips (max_client_batch_size=500)
             : undefined;
   // Ensure queue batch doesn't exceed server's max_client_batch_size
   const maxBatchFromProvider = providerOptions?.maxBatchSize as number | undefined;

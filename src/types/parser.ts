@@ -168,6 +168,11 @@ export interface ParsedEntity {
   language?: string | undefined;
   children?: ParsedEntity[] | undefined;
 
+  /** Parent context for hierarchical SemId generation */
+  parentSemId?: string | undefined;
+  parentName?: string | undefined;
+  parentType?: EntityKind | undefined;
+
   references?: string[] | undefined;
   relationships?:
     | Array<{

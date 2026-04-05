@@ -1,5 +1,7 @@
 # Protobuf
 
+Analyzes relationships between protobuf definitions and gRPC implementations.
+
 ## Overview
 
 This module provides a complete protobuf parsing and code linking framework for analyzing relationships between `.proto` definitions and their generated implementations. It parses protobuf files to extract service, message, and field definitions, then links these entities to corresponding source code implementations (producers/consumers). The module builds a graph-based representation of these relationships, enabling code analysis tools to trace data contracts and implementation patterns across gRPC boundaries.

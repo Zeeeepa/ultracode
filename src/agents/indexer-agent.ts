@@ -41,6 +41,7 @@ import type {
   Relationship,
 } from "../types/storage.js";
 import { flattenParsedEntities, parsedEntityToEntity, type RelationType } from "../types/storage.js";
+import { hashText } from "../utils/fast-hash.js";
 import { sleep, tryGarbageCollect } from "../utils/runtime-detection.js";
 import { BaseAgent } from "./base.js";
 import { addEntitiesToNameMap, buildEntityNameMap, resolveByNameAndLine } from "./indexer/entity-resolution.js";
@@ -534,7 +535,16 @@ export class IndexerAgent extends BaseAgent {
     const storageEntities: Entity[] = [];
     const validParsed: ParsedEntity[] = [];
     const preErrors: Array<{ item: unknown; error: string }> = [];
-    const fileHash = nanoid(8); // In production, use actual file hash
+    // Content-based hash: stable across re-indexes for embedding dedup
+    let fileHash: string;
+    try {
+      fileHash = hashText(filePath);
+    } catch {
+      fileHash = nanoid(8); // Fallback if hasher not initialized yet
+    }
+
+    // Per-file ordinal map for SemId disambiguation (Zig-compatible)
+    const ordinalMap: Map<string, number> = new Map();
 
     for (const parsed of flatEntities) {
       try {
@@ -573,9 +583,20 @@ export class IndexerAgent extends BaseAgent {
         // Use entity's filePath if available (for flattened children), otherwise use provided filePath
         const entityFilePath = normalizedParsed.filePath || filePath;
         const base = parsedEntityToEntity(normalizedParsed, entityFilePath, fileHash);
+
+        // Build parent context from flattened entity (SemId hierarchical IDs)
+        const parentCtx =
+          normalizedParsed.parentSemId && normalizedParsed.parentName && normalizedParsed.parentType
+            ? {
+                semId: normalizedParsed.parentSemId,
+                name: normalizedParsed.parentName,
+                entityType: normalizedParsed.parentType,
+              }
+            : null;
+
         const entity: Entity = {
           ...base,
-          id: stableEntityId(base),
+          id: stableEntityId(base, ordinalMap, parentCtx),
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
@@ -897,8 +918,16 @@ export class IndexerAgent extends BaseAgent {
 
     // Flatten and convert entities — collect into temp array for incremental Map update
     const flatEntities = flattenParsedEntities(entities);
-    const fileHash = nanoid(8);
+    let fileHash: string;
+    try {
+      fileHash = hashText(filePath);
+    } catch {
+      fileHash = nanoid(8);
+    }
     const newEntities: Entity[] = [];
+
+    // Per-file ordinal map for SemId disambiguation (Zig-compatible)
+    const ordinalMap: Map<string, number> = new Map();
 
     for (const parsed of flatEntities) {
       try {
@@ -906,9 +935,15 @@ export class IndexerAgent extends BaseAgent {
 
         const entityFilePath = parsed.filePath || filePath;
         const base = parsedEntityToEntity(parsed, entityFilePath, fileHash);
+
+        const parentCtx =
+          parsed.parentSemId && parsed.parentName && parsed.parentType
+            ? { semId: parsed.parentSemId, name: parsed.parentName, entityType: parsed.parentType }
+            : null;
+
         const entity: Entity = {
           ...base,
-          id: stableEntityId(base),
+          id: stableEntityId(base, ordinalMap, parentCtx),
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };

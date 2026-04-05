@@ -6,6 +6,7 @@
  */
 
 import { closeSync, openSync, readSync, writeSync } from "node:fs";
+import rlModule from "node:readline";
 
 // Safe stderr write that works even when process.stderr is broken (Bun edge cases)
 let _stderrFd: number | null = null;
@@ -87,13 +88,24 @@ export function printError(msg: string): void {
 export function prompt(question: string): Promise<string> {
   writeErr(question);
 
-  // Synchronous line read from /dev/tty using fd — works reliably in Bun and Node.
-  // This blocks the event loop, which is fine for an interactive CLI prompt.
+  // Strategy 1: Use readline on process.stdin if it's a TTY
+  if (process.stdin.isTTY) {
+    const rl = rlModule.createInterface({ input: process.stdin, output: process.stderr });
+    return new Promise<string>((resolve) => {
+      rl.question("", (answer: string) => {
+        rl.close();
+        resolve(answer.trim());
+      });
+    });
+  }
+
+  // Strategy 2: Synchronous read from terminal device
+  // Unix: /dev/tty always works. Windows: CON only works if console is attached.
+  const ttyDevice = process.platform === "win32" ? "CON" : "/dev/tty";
   try {
-    const fd = openSync("/dev/tty", "r");
+    const fd = openSync(ttyDevice, "r");
     const buf = Buffer.alloc(1024);
     let line = "";
-    // Read one byte at a time until newline
     while (true) {
       const bytesRead = readSync(fd, buf, 0, 1, null);
       if (bytesRead === 0) break;
@@ -104,7 +116,7 @@ export function prompt(question: string): Promise<string> {
     closeSync(fd);
     return Promise.resolve(line.trim());
   } catch {
-    // No TTY — return empty
+    // No TTY — return empty (defaults will be used)
     return Promise.resolve("");
   }
 }

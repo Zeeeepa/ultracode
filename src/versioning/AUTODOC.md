@@ -1,5 +1,7 @@
 # Versioning
 
+Manages code snapshots with Git worktree or backup directory fallback
+
 ## Overview
 
 The Versioning module manages code snapshots using a hybrid backend strategy: Git-based snapshots (via stash/worktree) for Git repositories, and file-based backups for non-Git projects. It provides atomic snapshot creation, rollback, and lifecycle management with xxHash integrity verification and automatic cleanup of aged snapshots. The module abstracts away backend selection, allowing callers to snapshot, restore, and track file changes uniformly regardless of repository type.

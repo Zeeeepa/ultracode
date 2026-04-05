@@ -1,5 +1,7 @@
 # Tracing Module
 
+Static code flow analysis engine for understanding code behavior without runtime execution.
+
 ## Overview
 
 The Tracing module provides static code flow analysis without runtime execution, enabling five core analysis patterns: **trace_flow** (forward execution paths from A to B), **trace_backwards** (reverse analysis to find why a method isn't called), **trace_data_flow** (track data transformations through execution), **analyze_state_impact** (ripple effects of state changes), and **find_decision_points** (branching and guard detection). The `TraceEngine` is the primary coordinator, delegating traversal to `GraphologyPathBuilder` (optimized in-memory graph using graphology) or `PathBuilder` (fallback BFS/DFS), while specialized analyzers handle state (`StateTracker`), conditions (`ConditionAnalyzer`), and data sources (`DataFlowAnalyzer`). NgRx patterns are handled by dedicated `NgRxTraceEngine`. All analysis operates on the entity/relationship graph from `GraphStorage` and produces formatted results via `OutputFormatter`.

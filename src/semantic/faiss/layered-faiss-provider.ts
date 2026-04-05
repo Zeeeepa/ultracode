@@ -583,16 +583,23 @@ export class LayeredFaissProvider {
     const startTime = performance.now();
 
     // Collect all IDs and normalize all vectors into one flat array
+    // OPTIMIZATION: Normalize in-place into output buffer (avoids 19K+ temporary Float32Arrays)
     const allIds: string[] = [];
-    const dimensions = this.config.dimensions;
-    const allVectors = new Float32Array(embeddings.length * dimensions);
+    const dim = this.config.dimensions;
+    const allVectors = new Float32Array(embeddings.length * dim);
 
     for (let i = 0; i < embeddings.length; i++) {
       const embedding = embeddings[i]!;
-      const normalized = simdL2Normalize(embedding.vector);
+      const vec = embedding.vector;
+      const offset = i * dim;
+
+      // L2 normalize directly into output buffer (no temporary array)
+      let sumSq = 0;
+      for (let j = 0; j < dim; j++) sumSq += vec[j]! * vec[j]!;
+      const invNorm = sumSq > 0 ? 1.0 / Math.sqrt(sumSq) : 0;
+      for (let j = 0; j < dim; j++) allVectors[offset + j] = vec[j]! * invNorm;
 
       allIds.push(embedding.id);
-      allVectors.set(normalized, i * dimensions);
 
       // Update tracking sets
       if (this.isOnBaseBranch) {

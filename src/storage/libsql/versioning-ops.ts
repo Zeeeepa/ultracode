@@ -297,36 +297,54 @@ export class VersioningOps {
       "write",
     );
 
-    // 2. Bulk move with deduplication
-    await client.batch(
-      [
-        // Explicit column lists — Zig-compatible schema
-        // Use subquery with GROUP BY to deduplicate (staging table has no UNIQUE constraint,
-        // and INSERT OR REPLACE fails on duplicate rows within the same INSERT SELECT)
-        `INSERT INTO entities (id, project_hash, branch_name, name, type, file_path,
-          location, language, metadata, hash, complexity, size,
-          is_async, is_exported, is_test, has_docs, file_gen, created_at, updated_at)
-         SELECT id, project_hash, branch_name, name, type, file_path,
-          location, language, metadata, hash, MAX(complexity), MAX(size),
-          MAX(is_async), MAX(is_exported), MAX(is_test), MAX(has_docs), MAX(file_gen), MIN(created_at), MAX(updated_at)
-         FROM _staging_entities
-         GROUP BY id, project_hash, branch_name`,
-        `INSERT INTO relationships (id, project_hash, branch_name, from_id, to_id, type,
-          file_path, weight, metadata, created_at, updated_at)
-         SELECT id, project_hash, branch_name, from_id, to_id, type,
-          file_path, MAX(weight), metadata, MIN(created_at), MAX(updated_at)
-         FROM _staging_relationships
-         GROUP BY id, project_hash, branch_name`,
-        `INSERT INTO name_tokens (token, entity_id, project_hash, branch_name, source)
-         SELECT token, entity_id, project_hash, branch_name, MAX(source)
-         FROM _staging_name_tokens
-         GROUP BY token, entity_id, project_hash, branch_name`,
-        `INSERT OR REPLACE INTO files (path, project_hash, branch_name, hash, last_indexed, entity_count, size, language)
-         SELECT path, project_hash, branch_name, hash, last_indexed, entity_count, size, language
-         FROM _staging_files`,
-      ],
-      "write",
+    // 2. Bulk move: fast path (no GROUP BY) when no duplicates, slow path with dedup otherwise
+    const dupCheck = await client.execute(
+      `SELECT (SELECT COUNT(*) FROM _staging_entities) - (SELECT COUNT(DISTINCT id || '|' || project_hash || '|' || branch_name) FROM _staging_entities) as dups`,
     );
+    const hasDups = ((dupCheck.rows[0]?.["dups"] as number) || 0) > 0;
+
+    if (hasDups) {
+      // Slow path: GROUP BY to deduplicate (staging table has no UNIQUE constraint)
+      await client.batch(
+        [
+          `INSERT INTO entities (id, project_hash, branch_name, name, type, file_path,
+            location, language, metadata, hash, complexity, size,
+            is_async, is_exported, is_test, has_docs, file_gen, created_at, updated_at)
+           SELECT id, project_hash, branch_name, name, type, file_path,
+            location, language, metadata, hash, MAX(complexity), MAX(size),
+            MAX(is_async), MAX(is_exported), MAX(is_test), MAX(has_docs), MAX(file_gen), MIN(created_at), MAX(updated_at)
+           FROM _staging_entities
+           GROUP BY id, project_hash, branch_name`,
+          `INSERT INTO relationships (id, project_hash, branch_name, from_id, to_id, type,
+            file_path, weight, metadata, created_at, updated_at)
+           SELECT id, project_hash, branch_name, from_id, to_id, type,
+            file_path, MAX(weight), metadata, MIN(created_at), MAX(updated_at)
+           FROM _staging_relationships
+           GROUP BY id, project_hash, branch_name`,
+          `INSERT INTO name_tokens (token, entity_id, project_hash, branch_name, source)
+           SELECT token, entity_id, project_hash, branch_name, MAX(source)
+           FROM _staging_name_tokens
+           GROUP BY token, entity_id, project_hash, branch_name`,
+          `INSERT OR REPLACE INTO files (path, project_hash, branch_name, hash, last_indexed, entity_count, size, language)
+           SELECT path, project_hash, branch_name, hash, last_indexed, entity_count, size, language
+           FROM _staging_files`,
+        ],
+        "write",
+      );
+    } else {
+      // Fast path: no duplicates → plain INSERT (skip GROUP BY overhead)
+      await client.batch(
+        [
+          `INSERT INTO entities SELECT * FROM _staging_entities`,
+          `INSERT INTO relationships SELECT * FROM _staging_relationships`,
+          `INSERT INTO name_tokens SELECT * FROM _staging_name_tokens`,
+          `INSERT OR REPLACE INTO files (path, project_hash, branch_name, hash, last_indexed, entity_count, size, language)
+           SELECT path, project_hash, branch_name, hash, last_indexed, entity_count, size, language
+           FROM _staging_files`,
+        ],
+        "write",
+      );
+    }
 
     // 3. Recreate indexes
     await client.batch(VersioningOps.GRAPH_INDEX_CREATES, "write");

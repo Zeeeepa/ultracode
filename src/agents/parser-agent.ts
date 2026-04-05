@@ -573,8 +573,8 @@ export class ParserAgent extends BaseAgent {
       if (!this.embeddingAccumulator) {
         // Lazy init accumulator on first texts - use dimensions from config
         const dimensions = this.embeddingConfig?.dimensions ?? 384;
-        const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 128;
-        const parallelBatches = this.embeddingConfig?.provider === "tei" ? 4 : 12;
+        const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 256;
+        const parallelBatches = this.embeddingConfig?.provider === "tei" ? 8 : 12;
         this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize, parallelBatches });
         log.d("PARSER", "Initialized embedding accumulator (centralized mode)", { dimensions, queueBatchSize });
       }
@@ -1658,8 +1658,8 @@ export class ParserAgent extends BaseAgent {
     if (config?.centralizedEmbeddings) {
       this.embeddingAccumulator = getEmbeddingAccumulator({
         dimensions: config.dimensions ?? 384,
-        queueBatchSize: config.queueBatchSize ?? 128,
-        parallelBatches: config.provider === "tei" ? 4 : 12,
+        queueBatchSize: config.queueBatchSize ?? 256,
+        parallelBatches: config.provider === "tei" ? 8 : 12,
       });
       log.i("PARSER", "Accumulator configured for centralized mode", {
         dimensions: config.dimensions,

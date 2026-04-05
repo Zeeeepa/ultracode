@@ -437,6 +437,10 @@ export function flattenParsedEntities(roots: ParsedEntity[]): ParsedEntity[] {
         name: qualName,
         filePath: resolvedPath,
         language: resolvedLang,
+        // Preserve parent context for SemId generation
+        parentSemId: node.id,
+        parentName: node.name,
+        parentType: node.type,
       };
 
       stack.push({ node: qualified, prefix: qualified.name, parentPath: qualified.filePath });

@@ -1,5 +1,7 @@
 # Diagram Renderers
 
+Converts diagram intermediate representation into multiple visualization text formats (D2, Graphviz, Mermaid).
+
 ## Overview
 
 The `src/diagrams/renderers` module implements a pluggable diagram rendering system that converts abstract diagram representations (`DiagramIR`) into concrete diagram syntaxes. Three renderer backends are provided: D2, Graphviz, and Mermaid, each handling diagram node rendering, edge styling, and format-specific syntax constraints. Renderers handle node grouping, shape/color styling, and edge label formatting in a backend-agnostic way through a common interface.

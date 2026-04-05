@@ -1,5 +1,7 @@
 # Taint
 
+Static analysis framework for detecting taint flow vulnerabilities in code.
+
 ## Overview
 
 Taint is a data flow analysis system that detects security vulnerabilities by tracking how untrusted data (sources) flows through the codebase to dangerous operations (sinks) without sufficient sanitization. The module identifies SQL injection, XSS, command injection, and prototype pollution vulnerabilities by analyzing source code patterns and constructing complete vulnerability flows. It uses regex-based pattern catalogs to classify sources, sinks, and sanitizers, then formats results with pagination and severity classification for developer consumption.

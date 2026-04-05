@@ -73,10 +73,10 @@ export interface AccumulatorStats {
 // =============================================================================
 
 const DEFAULT_CONFIG: AccumulatorConfig = {
-  flushThreshold: 500, // Async flush every 500 embeddings (was 5000, now incremental)
+  flushThreshold: 1000, // Incremental flush every 1000 embeddings (maximize TEI+FAISS overlap)
   dimensions: 384, // Default for e5-small, MiniLM models (most common)
-  queueBatchSize: 200, // Send 200 texts per OVMS request (good for GPU utilization)
-  parallelBatches: 12, // Default for llamacpp (--parallel 8), TEI should use 4
+  queueBatchSize: 256, // Send 256 texts per request (TEI max_client_batch_size=500)
+  parallelBatches: 16, // TEI GPU can handle high concurrency
 };
 
 export class EmbeddingAccumulator {
@@ -111,8 +111,8 @@ export class EmbeddingAccumulator {
 
   // Debounce for accumulating texts before processing
   private debounceAbort: AbortController | null = null;
-  private static readonly DEBOUNCE_MS = 50; // Wait 50ms for more texts
-  private static readonly MIN_BATCH_THRESHOLD = 50; // Start immediately if >= 50 texts
+  private static readonly DEBOUNCE_MS = 10; // Minimal debounce — texts arrive in bursts from workers
+  private static readonly MIN_BATCH_THRESHOLD = 16; // Start immediately with small batches
 
   // Stats
   private stats: AccumulatorStats = {
@@ -595,6 +595,29 @@ export class EmbeddingAccumulator {
           this.stats.accumulated += embeddings.length;
           for (const emb of embeddings) {
             this.stats.totalBytes += emb.vector.byteLength;
+          }
+
+          // OPTIMIZATION: Incremental flush to FAISS as embeddings arrive
+          // Instead of accumulating 19K+ vectors and flushing at the end,
+          // flush every flushThreshold vectors to overlap TEI + FAISS I/O.
+          if (this.pending.length >= this.config.flushThreshold && this.vectorProvider && !this.inFlightFlush) {
+            const chunk = this.pending;
+            this.pending = [];
+            this.inFlightFlush = this.vectorProvider
+              .addBatch(chunk)
+              .then(() => {
+                this.stats.flushed += chunk.length;
+                this.stats.flushCount++;
+                return chunk.length;
+              })
+              .catch((err) => {
+                log.w("ACCUMULATOR", "incremental_flush_fail", { err: (err as Error).message });
+                this.pending.unshift(...chunk); // Put back on failure
+                return 0;
+              })
+              .finally(() => {
+                this.inFlightFlush = null;
+              });
           }
         }
       }

@@ -1187,9 +1187,9 @@ async function startBackgroundServices(ctx: {
       const watcherConfig: AutoDocWatcherConfig = {
         rootDir: ctx.directory,
         enabled: true,
-        debounceMs: ctx.config.mcp?.autodoc?.debounceMs ?? 45000,
-        minDebounceMs: ctx.config.mcp?.autodoc?.minDebounceMs ?? 30000,
-        maxDebounceMs: ctx.config.mcp?.autodoc?.maxDebounceMs ?? 60000,
+        debounceMs: ctx.config.mcp?.autodoc?.debounceMs ?? 300_000, // 5 min — prevent LLM thrashing
+        minDebounceMs: ctx.config.mcp?.autodoc?.minDebounceMs ?? 120_000, // 2 min minimum
+        maxDebounceMs: ctx.config.mcp?.autodoc?.maxDebounceMs ?? 600_000, // 10 min maximum
         useLlm,
         llmConfig: ctx.config.mcp?.autodoc?.llmConfig,
       };
@@ -1351,7 +1351,7 @@ async function main() {
 
           // Poll until all agent task queues are empty
           let waitIterations = 0;
-          const maxWaitMs = 30000; // 30 sec max wait
+          const maxWaitMs = 5000; // 5 sec max wait (was 30s — too long for shutdown)
           const pollIntervalMs = 100;
           const maxIterations = maxWaitMs / pollIntervalMs;
 
@@ -1407,6 +1407,15 @@ async function main() {
           log.i("ROSLYN", "shutdown_ok", {});
         } catch (error) {
           log.e("ROSLYN", "shutdown_err", { err: String(error) });
+        }
+
+        // 2.9. Stop AutoDoc watcher (abort pending LLM enrichment)
+        try {
+          const { resetAutoDocWatcher } = await import("./autodoc/watcher/autodoc-watcher.js");
+          resetAutoDocWatcher();
+          log.i("AUTODOC", "shutdown_ok", {});
+        } catch {
+          // Not initialized
         }
 
         // 3. Shutdown conductor and agents

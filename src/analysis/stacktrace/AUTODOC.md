@@ -1,5 +1,7 @@
 # Stacktrace Analyzer
 
+Analyzes stacktraces by parsing frames, classifying errors, resolving entities, and generating root cause diagnosis with fixes.
+
 ## Overview
 
 The Stacktrace Analyzer module parses and diagnoses runtime errors by extracting stack frames, classifying error types and severity, and resolving frames to corresponding code entities via a code graph. It supports multiple programming languages with auto-detection and can optionally integrate with trace-backwards analysis and impact assessment to generate actionable fix suggestions. The module is designed as a pipeline with clear separation: parsing → classification → resolution → optional enrichment → diagnosis output.

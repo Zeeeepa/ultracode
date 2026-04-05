@@ -45,40 +45,35 @@ Full indexing of a medium project (~500 files) completes in **3-5 seconds** (par
 
 The project is optimized for [Bun](https://bun.sh) (an alternative JavaScript runtime) and runs 50% faster with it.
 
-**Bun + UltraCode** (recommended — one-liner):
+**Bun + UltraCode** (recommended — install + setup):
 
 ```bash
 # macOS / Linux
-curl -fsSL https://bun.sh/install | bash && ~/.bun/bin/bun i -g ultracode && ~/.bun/bin/bun pm -g trust ultracode
+curl -fsSL https://bun.sh/install | bash && ~/.bun/bin/bun i -g ultracode --trust && ultracode-setup
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm bun.sh/install.ps1 | iex; bun i -g ultracode; bun pm -g trust ultracode
+irm bun.sh/install.ps1 | iex; bun i -g ultracode --trust; ultracode-setup
 ```
 
 **UltraCode only** (Bun already installed):
 
 ```bash
-bun i -g ultracode && bun pm -g trust ultracode
+bun i -g ultracode --trust && ultracode-setup
 ```
 
-**npm** (alternative):
+**npm** (alternative — install + setup):
 
 ```bash
-npm install -g ultracode
+npm install -g ultracode && ultracode-setup
 ```
 
-> **Why two steps for Bun?**
-> Some dependencies use postinstall scripts to build native addons:
-> 
-> - **cbor-extract** — fast native metadata serialization (via cbor-x)
-> - **protobufjs** — binary protocol for IPC
-> - **webgpu** — Dawn GPU backend for AMD/Intel
-> 
-> Bun blocks postinstall scripts by default. The `bun pm trust` command allows their execution — no reinstall needed.
-> 
-> Other native components (oxc-parser, xxhash-wasm, better-sqlite3) ship prebuilt binaries and work without trust.
+> If `ultracode-setup` fails after npm install (path conflict with bun), use:
+> `node "$(npm root -g)/ultracode/dist/cli/setup-command.js"`
+
+> **Why `--trust` for Bun?**
+> Bun blocks postinstall scripts by default. `--trust` allows native addon builds (better-sqlite3, cbor-extract, protobufjs) — all legitimate dependencies.
 
 > **Note**: For full code analysis on different languages, runtimes are required:
 > 

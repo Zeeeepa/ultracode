@@ -96,6 +96,8 @@ export class AutoDocWatcher {
   private processingModules = new Set<string>();
   private moduleCache: Map<string, ModuleInfo> = new Map();
   private moduleCacheControllers: Map<string, AbortController> = new Map();
+  /** Set to true on stop() — enrichment loops check this to abort early */
+  private stopped = false;
   /** Cached result of .autodoc folder check */
   private autodocEnabled: boolean | null = null;
   private autodocCheckTime = 0;
@@ -326,6 +328,8 @@ export class AutoDocWatcher {
    * Stop watching
    */
   stop(): void {
+    this.stopped = true;
+
     if (this.subscriptionId) {
       knowledgeBus.unsubscribe(this.subscriptionId);
       this.subscriptionId = null;
@@ -355,6 +359,7 @@ export class AutoDocWatcher {
    * Handle incoming events from KnowledgeBus
    */
   private async handleEvent(entry: KnowledgeEntry): Promise<void> {
+    if (this.stopped) return;
     const data = entry.data;
 
     switch (entry.topic) {
@@ -784,6 +789,10 @@ export class AutoDocWatcher {
 
     let enriched = 0;
     for (const { modPath, autodocPath, content } of pendingPaths) {
+      if (this.stopped) {
+        log.i("AUTODOCWATCH", "enrich_aborted_shutdown", { remaining: pendingPaths.length - enriched });
+        break;
+      }
       try {
         const dirNorm = modPath.replace(/\\/g, "/");
         const codeCtx = await readCodeSnippets(modPath);

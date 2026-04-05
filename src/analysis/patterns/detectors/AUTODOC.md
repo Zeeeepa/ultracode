@@ -1,6 +1,6 @@
 # Detectors
 
-Language-specific code pattern detectors for identifying anti-patterns across TypeScript, C#, Go, Java, Python, and Zig
+Language-agnostic and language-specific code quality pattern detectors for multiple programming languages.
 
 ## Overview
 

@@ -1,6 +1,6 @@
 # Tools Module
 
-MCP tool handlers, schemas, and utilities for code analysis, agent metrics, and system integration.
+MCP tool registry, schemas, handlers, and response formatting utilities.
 
 ## Overview
 

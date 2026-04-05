@@ -1,5 +1,7 @@
 # GraphQL
 
+Parses GraphQL schemas and links them to source code implementations and generated code.
+
 ## Overview
 
 This module parses GraphQL schema files and automatically detects links between schema definitions and implementation code. It identifies resolver implementations, generated types, hooks, and queries, building a complete relationship graph that tracks how GraphQL definitions connect to their implementations and generated artifacts. The module follows the same pattern as the Swagger code linker, using pattern matching for generated file detection and resolver framework identification to establish bidirectional code-to-schema links.

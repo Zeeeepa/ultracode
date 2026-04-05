@@ -1,5 +1,7 @@
 # addons
 
+Manages C# parsing via external Roslyn addon process with native analysis capabilities.
+
 ## Overview
 
 The `addons` module provides C# code parsing by managing an external Roslyn-based .NET subprocess (`Ultrasharp.Addon.dll`), connected via Named Pipes using a binary IPC protocol. It exposes a `CSharpNativeParser` facade for single-file and batch parsing, with a singleton lifecycle manager handling lazy initialization, concurrent-call deduplication, solution file discovery, and graceful shutdown. When the Roslyn addon is unavailable, all parse methods return `null`, enabling transparent fallback to tree-sitter parsing.

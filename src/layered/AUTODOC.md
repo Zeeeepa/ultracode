@@ -1,5 +1,7 @@
 # Layered
 
+Three-layer branch-aware symbol indexing with deltas, caching, and semantic search.
+
 ## Overview
 
 The **layered** module implements a three-layer symbol indexing architecture with Git branch awareness and delta-based composition. Layer 0 (Base) holds immutable main-branch entities shared across all clients; Layer 1 (Branch Deltas) stores per-branch committed changes relative to main; Layer 2 (Working Deltas) is reserved for per-client uncommitted changes (future). Delta-based composition avoids full re-indexing on branch switch—changes are computed from `git diff` and merged at query time. `LayeredIndexManager` orchestrates all components: graph index, vector store, git delta computer, incremental update queue, file change integration, cache managers, and maintenance service.

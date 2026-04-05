@@ -322,17 +322,36 @@ function getTtyStdio() {
 
 async function runSetupWizard() {
   // Skip if no terminal at all (CI, piped output, headless)
-  if (!hasTerminal) {
-    printInfo("Non-interactive mode - skipping setup wizard");
-    printInfo("Run setup manually: npx ultracode-setup");
+  // npm/bun lifecycle scripts cannot reliably use stdin.
+  // Show setup instructions instead of interactive prompts.
+  if (!hasTerminal || !ttyReadable || process.env.npm_lifecycle_event === "postinstall") {
+    const isBun = !!process.versions.bun || !!process.env.BUN_INSTALL;
+
+    if (isBun) {
+      printBox("UltraCode installed!", [
+        `${colors.green}✓${colors.reset} To configure semantic search (embeddings, GPU), run:`,
+        "",
+        `  ${colors.bright}ultracode-setup${colors.reset}`,
+        "",
+        `${colors.dim}Or start using immediately — semantic search auto-configures on first use.${colors.reset}`,
+      ]);
+    } else {
+      printBox("UltraCode installed!", [
+        `${colors.green}✓${colors.reset} To configure semantic search (embeddings, GPU), run:`,
+        "",
+        `  ${colors.bright}ultracode-setup${colors.reset}`,
+        "",
+        `${colors.dim}Or start using immediately — semantic search auto-configures on first use.${colors.reset}`,
+      ]);
+    }
     return;
   }
 
-  // Ask user if terminal input is available
+  // Direct invocation (not via npm) — allow interactive setup
   if (ttyReadable) {
     const shouldSkip = await askSkip("Run setup wizard to configure semantic search?");
     if (shouldSkip) {
-      printInfo("Skipping setup. Run later with: npx ultracode-setup");
+      printInfo("Skipping setup. Run later with: ultracode-setup");
       return;
     }
   }

@@ -1,5 +1,7 @@
 # Helm Language Configuration
 
+Provides language configuration objects for infrastructure and DSL languages, enabling AST-based code analysis across multiple schema and query syntaxes.
+
 ## Overview
 
 Provides language configuration for semantic code parsing of Helm templates. This module defines syntax rules, keywords, node types, and semantic extraction rules that enable code analysis tools to understand Helm's template structure. The configuration follows a declarative pattern consistent with other language definitions in the infrastructure module, allowing Helm to integrate seamlessly into the semantic analysis pipeline alongside GraphQL, LINQ, Prisma, Protobuf, and SQL.

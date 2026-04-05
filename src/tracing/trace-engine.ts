@@ -236,6 +236,44 @@ export class TraceEngine {
       }
     }
 
+    // 5c. Phase 4: Hypothesis bridge fallback (inferred runtime relationships)
+    if (paths.length === 0) {
+      try {
+        const { findPathWithHypotheses, getHypothesisStore } = await import("../hypothesis/index.js");
+        const store = getHypothesisStore();
+        if (store.count() > 0) {
+          const hypPaths = await findPathWithHypotheses(
+            this.storage,
+            store,
+            sourceEntity.id,
+            targetEntity.id,
+            DEFAULT_MAX_PATHS,
+            maxDepth,
+          );
+          for (const hp of hypPaths) {
+            const tracePath: TracePath = {
+              id: `hyp-${paths.length}`,
+              confidence: hp.totalConfidence,
+              steps: hp.steps.map((s, i) => ({
+                order: i + 1,
+                entity: s.entityName || s.entityId,
+                entityId: s.entityId,
+                file: "",
+                line: 0,
+                action: "call" as const,
+                preconditions: s.hypothesis ? [`${s.hypothesis.marker} ${s.hypothesis.evidence}`] : undefined,
+              })),
+              summary: `Hypothesis bridge (confidence: ${hp.totalConfidence.toFixed(2)})`,
+              warnings: ["hypothesis: path uses inferred runtime relationships"],
+            };
+            paths.push(tracePath);
+          }
+        }
+      } catch {
+        // Hypothesis module not available or store empty — non-critical
+      }
+    }
+
     // 6. Analyze states and conditions
     let statesSummary: StatesSummary = { modified: [], read: [], critical: [] };
     if (params.trackStates && paths.length > 0) {

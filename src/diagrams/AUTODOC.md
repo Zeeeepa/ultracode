@@ -1,5 +1,7 @@
 # Diagrams
 
+Universal diagram intermediate representation and collection pipeline for flowcharts, class diagrams, and component visualizations.
+
 ## Overview
 
 This module generates architecture diagrams by analyzing the indexed code graph without reading source files. It uses a phased approach: graph traversal with `CONTAINS`-only relationships, relationship lifting (method-level calls elevated to class-level at diagram depth 2), batch enrichment via `TraceEngine`, and optional field-level mapping via regex analysis. All diagrams are built into a universal intermediate representation (`DiagramIR`), then rendered to target format (Mermaid, Graphviz, or D2). The design includes LRU caching (SHA256 keys, 5-minute TTL, 20-entry max) and automatic filtering of non-application code (scripts/, tests/, generated/, docs/).

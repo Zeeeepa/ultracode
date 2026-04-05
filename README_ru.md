@@ -45,40 +45,35 @@ MCP-сервер для ИИ-агентов, работающих с кодом.
 
 Проект оптимизирован под [Bun](https://bun.sh) (это альтернативный JavaScript-runtime) и работает под ним на 50% быстрее.
 
-**Bun + UltraCode** (рекомендуется — одной командой):
+**Bun + UltraCode** (рекомендуется — установка + настройка):
 
 ```bash
 # macOS / Linux
-curl -fsSL https://bun.sh/install | bash && ~/.bun/bin/bun i -g ultracode && ~/.bun/bin/bun pm -g trust ultracode
+curl -fsSL https://bun.sh/install | bash && ~/.bun/bin/bun i -g ultracode --trust && ultracode-setup
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm bun.sh/install.ps1 | iex; bun i -g ultracode; bun pm -g trust ultracode
+irm bun.sh/install.ps1 | iex; bun i -g ultracode --trust; ultracode-setup
 ```
 
 **Только UltraCode** (Bun уже установлен):
 
 ```bash
-bun i -g ultracode && bun pm -g trust ultracode
+bun i -g ultracode --trust && ultracode-setup
 ```
 
-**npm** (альтернатива):
+**npm** (альтернатива — установка + настройка):
 
 ```bash
-npm install -g ultracode
+npm install -g ultracode && ultracode-setup
 ```
 
-> **Почему два шага для Bun?**
-> Некоторые зависимости используют postinstall-скрипты для сборки нативных аддонов:
-> 
-> - **cbor-extract** — быстрая нативная сериализация метаданных (через cbor-x)
-> - **protobufjs** — бинарный протокол для IPC
-> - **webgpu** — Dawn GPU backend для AMD/Intel
-> 
-> Bun блокирует postinstall скрипты по умолчанию. Команда `bun pm trust` разрешает их выполнение — повторная установка не нужна.
-> 
-> Остальные нативные компоненты (oxc-parser, xxhash-wasm, better-sqlite3) поставляются с готовыми бинарниками и работают без trust.
+> Если `ultracode-setup` не работает после npm install (конфликт PATH с bun), используйте:
+> `node "$(npm root -g)/ultracode/dist/cli/setup-command.js"`
+
+> **Зачем `--trust` для Bun?**
+> Bun блокирует postinstall-скрипты по умолчанию. `--trust` разрешает сборку нативных аддонов (better-sqlite3, cbor-extract, protobufjs) — все легитимные зависимости.
 
 > **Примечание**: Для полноценного анализа кода на разных языках требуются runtime:
 > 

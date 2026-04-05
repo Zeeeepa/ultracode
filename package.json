@@ -1,6 +1,6 @@
 {
   "name": "ultracode",
-  "version": "5.13.8",
+  "version": "5.14.7",
   "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/C#/Go/Rust/Java/C++/Kotlin/Swift/Zig/Bash",
   "license": "AGPL-3.0-only OR Commercial",
   "author": "faxenoff",
@@ -31,10 +31,12 @@
   "bin": {
     "ultracode": "dist/index.js",
     "ultracode-cli": "bin/ultracode.js",
+    "ultracode-setup": "bin/ultracode-setup.cjs",
     "ulog": "dist/cli/log-query/log-query-cli.js"
   },
   "files": [
     "bin/**/*.js",
+    "bin/**/*.cjs",
     "dist/**/*.js",
     "dist/**/*.wasm",
     "dist/**/*.d.ts",
@@ -125,7 +127,7 @@
     "smoke:clean": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop --clean",
     "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",
     "clean": "rm -rf dist",
-    "postinstall": "sh scripts/postinstall.sh",
+    "postinstall": "node scripts/postinstall.cjs",
     "prepublishOnly": "npm run build",
     "prepare": "husky"
   },

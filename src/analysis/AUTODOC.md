@@ -1,5 +1,7 @@
 # Analysis Module
 
+Detects active usage of API schemas and technology stacks in projects.
+
 ## Overview
 
 The analysis module provides three core capabilities for understanding codebases: **technology stack detection** via `TechnologyDetector`, which scans entities, relationships, and project manifests to identify languages, frameworks, build tools, and dependencies with confidence scores; **state chaos analysis** via `ChaosAnalyzer`, which detects scattered mutable state, race conditions, and C#-specific anti-patterns by analyzing entity graphs and their relationships; and **API contract usage detection** via swagger/GraphQL/Protobuf detectors, which identify which specification files are actively used via multi-signal analysis (imports, codegen scripts, config files). The module is designed as a read-only analysis layer operating on `GraphStorage` entity and relationship graphs, producing structured metadata suitable for AI-driven refactoring recommendations.

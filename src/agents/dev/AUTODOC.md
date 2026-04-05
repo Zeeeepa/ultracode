@@ -1,6 +1,6 @@
 # Dev
 
-> Utilities for collecting, classifying, and processing source code files during indexing, including incremental reindexing and a multi-phase indexing pipeline.
+Modular file collection, parsing, and indexing pipeline for source code repository analysis.
 
 ## Overview
 
@@ -100,20 +100,6 @@ File read errors and stat failures are logged and skipped without aborting the s
 - `isDataExtension`
 - `SUPPORTED_CODE_EXTENSIONS`
 - `SUPPORTED_DATA_EXTENSIONS`
-- `VendoredDetectionResult`
-- `detectVendoredDirectories`
-- `detectKnownVendored`
-- `detectArchMirrors`
-- `detectMassHeaders`
-- `estimateAvgLoc`
-- `isVendoredPath`
-- `isSkipEmbeddingExtension`
-- `KNOWN_VENDORED_SEGMENTS`
-- `SKIP_EMBEDDING_EXTENSIONS`
-- `ARCH_MIRROR_MIN_SUBDIRS`
-- `MASS_HEADER_MIN_FILES`
-- `MASS_HEADER_MAX_AVG_LOC`
-- `LOC_SAMPLE_SIZE`
 
 ## Files
 

@@ -133,6 +133,20 @@ export class OutputFormatter {
       }
     }
 
+    // Enclosing conditions (innermost→outermost)
+    if (step.conditions && step.conditions.length > 0) {
+      for (const cond of step.conditions) {
+        line += `\n     ◇ ${cond}`;
+      }
+    }
+
+    // Hypothesis preconditions
+    if (step.preconditions && step.preconditions.length > 0) {
+      for (const pre of step.preconditions) {
+        line += `\n     ❓ ${pre}`;
+      }
+    }
+
     return line;
   }
 
@@ -191,9 +205,15 @@ export class OutputFormatter {
         const fromId = participantIds.get(from.entity) || "P0";
         const toId = participantIds.get(to.entity) || "P0";
 
-        const arrow = from.awaits ? "-->>" : "->>";
+        // Dashed arrow for hypothesis steps, solid for normal
+        const isHypothesis = from.preconditions?.some((p) => p.startsWith("?"));
+        const arrow = isHypothesis ? "-->>" : from.awaits ? "-->>" : "->>";
         const label = from.condition || from.action;
         lines.push(`  ${fromId}${arrow}${toId}: ${this.sanitize(label)}`);
+        // Show hypothesis evidence as Note
+        if (isHypothesis && from.preconditions) {
+          lines.push(`  Note right of ${toId}: ${this.sanitize(from.preconditions[0] || "hypothesis")}`);
+        }
       }
     }
 

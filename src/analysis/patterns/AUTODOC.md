@@ -1,6 +1,6 @@
 # Patterns
 
-Pattern detection system identifying code anti-patterns, smells, optimizations, and best practices
+Two-stage pattern detection system combining structural metadata analysis with semantic embedding validation.
 
 ## Overview
 

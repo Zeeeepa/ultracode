@@ -1,5 +1,7 @@
 # validation
 
+Multi-language code validation with before/after comparison and extensible linter support.
+
 ## Overview
 
 The validation module provides multi-language code quality checking with a pluggable linter architecture. `CodeValidator` orchestrates linter selection based on file type, executes batch validation with configurable concurrency, and generates before/after comparison reports to track code quality improvements. Three linter implementations are included: `OxlintLinter` for TypeScript/JavaScript (100x faster than ESLint), `BiomeLinter` as an alternative JS/TS linter, and `PylintLinter` for Python. All linters load lazily on first use to avoid import errors when binaries are unavailable, and support autofix with dry-run mode that safely tests fixes on temporary copies without modifying originals.

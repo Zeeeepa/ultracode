@@ -91,6 +91,14 @@ export function startEmbeddingWarmup(
       warmupDimensions = generator.getProvider()?.info.dimension ?? null;
       warmupGenerator = generator;
 
+      // Warm GPU/CPU caches with a dummy request (first TEI batch is ~1.5s cold, subsequent ~80ms)
+      try {
+        await generator.generateBatch(["warmup embedding pipeline"]);
+        log.d("WARMUP", "gpu_warmed_up");
+      } catch {
+        // Non-critical — GPU will warm on first real batch
+      }
+
       const elapsed = Date.now() - startTime;
       log.i("WARMUP", "Complete", { elapsed: `${elapsed}ms`, dimensions: warmupDimensions, provider });
 

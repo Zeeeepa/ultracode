@@ -1,6 +1,6 @@
 # Engine
 
-> Orchestrates 5-phase semantic three-way merge and resolves conflicts using traditional heuristics or AI-powered embedding analysis.
+Semantic three-way merge engine with AI-assisted conflict resolution and LCS-based diffing.
 
 ## Overview
 

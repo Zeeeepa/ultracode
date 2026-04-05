@@ -144,6 +144,8 @@ export interface TraceStep {
   documentation?: string | undefined;
   /** Code snippet */
   code?: string | undefined;
+  /** Enclosing conditions at this call site (innermost→outermost) */
+  conditions?: string[] | undefined;
 }
 
 /**

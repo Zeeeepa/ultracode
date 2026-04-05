@@ -60,7 +60,7 @@ const DEFAULT_CONFIG: Required<FaissProviderConfig> = {
   ivfNlist: 256,
   ivfNprobe: 32,
   sqBits: 8,
-  autoSaveThreshold: 5000,
+  autoSaveThreshold: 50000, // Higher = fewer mid-index saves (save at end instead)
   persistPath: "",
 };
 
@@ -323,14 +323,14 @@ class FaissProvider {
       const emb = embeddings[i]!;
       ids[i] = emb.id;
 
-      // L2 normalize for cosine similarity (SIMD-accelerated)
-      // For inner product metric, normalized vectors give cosine similarity
-      const normalized = simdL2Normalize(emb.vector);
+      // L2 normalize in-place into output buffer (avoids temporary Float32Array per vector)
+      const vec = emb.vector;
+      const offset = i * dim;
+      let sumSq = 0;
+      for (let j = 0; j < dim; j++) sumSq += vec[j]! * vec[j]!;
+      const invNorm = sumSq > 0 ? 1.0 / Math.sqrt(sumSq) : 0;
+      for (let j = 0; j < dim; j++) vectors[offset + j] = vec[j]! * invNorm;
 
-      // Direct copy into pre-allocated array (no intermediate arrays)
-      vectors.set(normalized, i * dim);
-
-      // Track ID for existence checks (content stored in LibSQL)
       this.idSet.add(emb.id);
     }
     pLog("F1_PREPARE_VECTORS");

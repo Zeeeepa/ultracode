@@ -1,5 +1,7 @@
 # Db
 
+Parses and analyzes database schemas, migrations, ORM models, and links them to code entities.
+
 ## Overview
 
 The Db module analyzes database schemas and links them to code entities, enabling detection of ORM patterns, Redis usage, and data access relationships throughout the codebase. It provides parsers for multiple schema definition formats (SQL, Prisma, LINQ) and pattern detectors to extract database usage from code. By connecting schema metadata to code entities, the module enables impact analysis of database changes and discovery of how applications interact with persistent data stores.

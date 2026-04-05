@@ -1,5 +1,7 @@
 # Graph Metrics
 
+Computes graph metrics (PageRank, Louvain, centrality, bus factor) for code dependency networks.
+
 ## Overview
 
 This module computes and formats code graph metrics for analyzing dependency networks and code structure. It provides four main analysis operations: PageRank scoring (entity importance in dependency flow), Louvain community detection (automatic code clustering), centrality analysis (network role classification), and bus factor assessment (knowledge concentration and contributor risk). Results can be persisted and formatted as text or JSON output, with built-in caching to avoid redundant computations.

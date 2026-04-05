@@ -1,6 +1,6 @@
 # Schemas
 
-> Centralized Zod validation schemas defining the input parameter contracts for all MCP tools, organized by functional domain.
+Zod validation schemas for MCP tool parameters across code analysis, documentation, semantic search, and graph operations.
 
 ## Overview
 

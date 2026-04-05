@@ -1,5 +1,7 @@
 # gpu
 
+Auto-selects optimal GPU vector backend with priority-based graceful degradation.
+
 ## Overview
 
 The `gpu` module abstracts GPU-accelerated vector operations (cosine similarity, batch cosine similarity, euclidean distance) behind a unified `VectorBackend` interface. `BackendSelector` (singleton) automatically detects available hardware via `GPUDetector` and selects the highest-priority backend. Six backends are supported: CUDA Native, CUDA Worker (Bun-compatible subprocess), Metal (Apple Silicon), WebGPU (universal), WASM SIMD (CPU), and Pure JS (fallback). The module is runtime-aware (Node.js vs Bun), handles Blackwell (RTX 50xx) incompatibilities, and degrades gracefully through the priority chain.

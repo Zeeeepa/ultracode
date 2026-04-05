@@ -1,5 +1,7 @@
 # Stacktrace Parsers
 
+Language-specific stacktrace parser implementations for error analysis
+
 ## Overview
 
 This module provides language-agnostic stacktrace parsing for 8+ programming languages including Java, .NET, Python, JavaScript, Go, Rust, Zig, and native C/C++/Swift. Each parser detects its format using pattern matching with confidence scoring, extracts exception metadata and stack frames, and normalizes them into a unified `StackFrame` structure. The Strategy pattern enables dynamic parser selection based on format detection, supporting polymorphic parsing across polyglot systems.

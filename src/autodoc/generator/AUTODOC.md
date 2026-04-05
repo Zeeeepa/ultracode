@@ -1,6 +1,6 @@
 # Module: D:/github/ultracode/src/autodoc/generator
 
-**Files:** 7 | **Entities:** 386 | **Language:** typescript
+Automatically generates and maintains AUTODOC.md templates using incremental updates and LLM enrichment.
 
 ## Interface
 
