@@ -1,10 +1,3 @@
----
-module_name: dev
-description: "File collection, extension classification, incremental indexing, and heuristic parsing utilities"
-status: active
-language: typescript
----
-
 # Dev
 
 > Utilities for collecting, classifying, and processing source code files during indexing, including incremental reindexing and a multi-phase indexing pipeline.
@@ -46,6 +39,20 @@ The dev module provides the file discovery and classification layer for the DevA
 | `applyChangeAnalysis` | function | Phase 4: applies change analysis to indexing context | [`indexing-pipeline.ts:253-279`](./indexing-pipeline.ts) |
 | `separateCodeAndDataFiles` | function | Phase 5: separates files by code vs data extension | [`indexing-pipeline.ts:299-325`](./indexing-pipeline.ts) |
 | `buildIndexingResult` | function | Builds final indexing result summary | [`indexing-pipeline.ts:350-363`](./indexing-pipeline.ts) |
+| `VendoredDetectionResult` | interface | Container for vendored directory detection results with prefixes and timing | [`vendored-detector.ts:58-70`](./vendored-detector.ts) |
+| `detectVendoredDirectories` | function | Recursively scans directory tree to identify vendored code paths | [`vendored-detector.ts:84-158`](./vendored-detector.ts) |
+| `detectKnownVendored` | function | Identifies directories matching known vendored path segment patterns | [`vendored-detector.ts:164-194`](./vendored-detector.ts) |
+| `detectArchMirrors` | function | Detects architecture-specific mirror directories common in compiled projects | [`vendored-detector.ts:200-255`](./vendored-detector.ts) |
+| `detectMassHeaders` | function | Identifies directories with many similar short files characteristic of generated code | [`vendored-detector.ts:261-305`](./vendored-detector.ts) |
+| `estimateAvgLoc` | function | Samples files and estimates average lines of code in a directory | [`vendored-detector.ts:310-331`](./vendored-detector.ts) |
+| `isVendoredPath` | function | Checks if a path matches known vendored directory patterns | [`vendored-detector.ts:341-350`](./vendored-detector.ts) |
+| `isSkipEmbeddingExtension` | function | Determines if file extension should be excluded from embedding generation | [`vendored-detector.ts:355-357`](./vendored-detector.ts) |
+| `KNOWN_VENDORED_SEGMENTS` | const | Set of path segment patterns indicating vendored or third-party code | [`vendored-detector.ts:23-37`](./vendored-detector.ts) |
+| `SKIP_EMBEDDING_EXTENSIONS` | const | Set of file extensions excluded from semantic embedding | [`vendored-detector.ts:40-40`](./vendored-detector.ts) |
+| `ARCH_MIRROR_MIN_SUBDIRS` | const | Minimum architecture subdirectories threshold for mirror detection | [`vendored-detector.ts:43-43`](./vendored-detector.ts) |
+| `MASS_HEADER_MIN_FILES` | const | Minimum file count for identifying mass-generated content directories | [`vendored-detector.ts:46-46`](./vendored-detector.ts) |
+| `MASS_HEADER_MAX_AVG_LOC` | const | Maximum average lines of code threshold for generated code detection | [`vendored-detector.ts:49-49`](./vendored-detector.ts) |
+| `LOC_SAMPLE_SIZE` | const | Number of files sampled when estimating average lines of code | [`vendored-detector.ts:52-52`](./vendored-detector.ts) |
 
 ## Dependencies
 
@@ -93,6 +100,20 @@ File read errors and stat failures are logged and skipped without aborting the s
 - `isDataExtension`
 - `SUPPORTED_CODE_EXTENSIONS`
 - `SUPPORTED_DATA_EXTENSIONS`
+- `VendoredDetectionResult`
+- `detectVendoredDirectories`
+- `detectKnownVendored`
+- `detectArchMirrors`
+- `detectMassHeaders`
+- `estimateAvgLoc`
+- `isVendoredPath`
+- `isSkipEmbeddingExtension`
+- `KNOWN_VENDORED_SEGMENTS`
+- `SKIP_EMBEDDING_EXTENSIONS`
+- `ARCH_MIRROR_MIN_SUBDIRS`
+- `MASS_HEADER_MIN_FILES`
+- `MASS_HEADER_MAX_AVG_LOC`
+- `LOC_SAMPLE_SIZE`
 
 ## Files
 
@@ -103,78 +124,5 @@ File read errors and stat failures are logged and skipped without aborting the s
 | `heuristic-parser.ts` | Creates simple module entities for unsupported languages |
 | `incremental-indexer.ts` | Incremental reindexing: file separation, provider setup, batch processing |
 | `indexing-pipeline.ts` | Multi-phase indexing pipeline: init, change detection, cleanup, file separation |
+| `vendored-detector.ts` | Detects vendored and generated code directories using heuristic analysis |
 | `index.ts` | Re-exports file collector and extension utilities |
-
-## New (pending description)
-
-- **VendoredDetectionResult** — `vendored-detector.ts:58-70`
-- **detectVendoredDirectories** — `vendored-detector.ts:84-158`
-- **<anonymous>** — `vendored-detector.ts:84-84`
-- **p** — `vendored-detector.ts:115-115`
-- **p** — `vendored-detector.ts:124-124`
-- **detectKnownVendored** — `vendored-detector.ts:164-194`
-- **<anonymous>** — `vendored-detector.ts:164-164`
-- **detectArchMirrors** — `vendored-detector.ts:200-255`
-- **<anonymous>** — `vendored-detector.ts:200-200`
-- **detectMassHeaders** — `vendored-detector.ts:261-305`
-- **<anonymous>** — `vendored-detector.ts:261-261`
-- **f** — `vendored-detector.ts:292-295`
-- **estimateAvgLoc** — `vendored-detector.ts:310-331`
-- **<anonymous>** — `vendored-detector.ts:310-310`
-- **isVendoredPath** — `vendored-detector.ts:341-350`
-- **<anonymous>** — `vendored-detector.ts:341-341`
-- **isSkipEmbeddingExtension** — `vendored-detector.ts:355-357`
-- **<anonymous>** — `vendored-detector.ts:355-355`
-- **KNOWN_VENDORED_SEGMENTS** — `vendored-detector.ts:23-37`
-- **SKIP_EMBEDDING_EXTENSIONS** — `vendored-detector.ts:40-40`
-- **ARCH_MIRROR_MIN_SUBDIRS** — `vendored-detector.ts:43-43`
-- **MASS_HEADER_MIN_FILES** — `vendored-detector.ts:46-46`
-- **MASS_HEADER_MAX_AVG_LOC** — `vendored-detector.ts:49-49`
-- **LOC_SAMPLE_SIZE** — `vendored-detector.ts:52-52`
-- **startTime** — `vendored-detector.ts:85-85`
-- **vendoredPrefixes** — `vendored-detector.ts:86-86`
-- **stats** — `vendored-detector.ts:87-87`
-- **normalizedRoot** — `vendored-detector.ts:90-90`
-- **dirFiles** — `vendored-detector.ts:93-93`
-- **rel** — `vendored-detector.ts:95-95`
-- **dir** — `vendored-detector.ts:96-96`
-- **arr** — `vendored-detector.ts:97-97`
-- **knownVendoredDirs** — `vendored-detector.ts:106-106`
-- **archMirrorDirs** — `vendored-detector.ts:113-113`
-- **massHeaderDirs** — `vendored-detector.ts:122-122`
-- **rel** — `vendored-detector.ts:132-132`
-- **elapsed** — `vendored-detector.ts:138-138`
-- **result** — `vendored-detector.ts:165-165`
-- **checked** — `vendored-detector.ts:166-166`
-- **segments** — `vendored-detector.ts:169-169`
-- **i** — `vendored-detector.ts:170-170`
-- **seg** — `vendored-detector.ts:171-171`
-- **prefix** — `vendored-detector.ts:174-174`
-- **fileCount** — `vendored-detector.ts:178-178`
-- **result** — `vendored-detector.ts:201-201`
-- **parentToChildren** — `vendored-detector.ts:204-204`
-- **parent** — `vendored-detector.ts:206-206`
-- **children** — `vendored-detector.ts:208-208`
-- **childFileNames** — `vendored-detector.ts:221-221`
-- **files** — `vendored-detector.ts:223-223`
-- **names** — `vendored-detector.ts:225-225`
-- **parts** — `vendored-detector.ts:227-227`
-- **allNames** — `vendored-detector.ts:234-234`
-- **threshold** — `vendored-detector.ts:242-242`
-- **commonFiles** — `vendored-detector.ts:243-243`
-- **result** — `vendored-detector.ts:262-262`
-- **prefixExtCount** — `vendored-detector.ts:266-266`
-- **parts** — `vendored-detector.ts:270-270`
-- **prefix** — `vendored-detector.ts:271-271`
-- **extMap** — `vendored-detector.ts:273-273`
-- **ext** — `vendored-detector.ts:280-280`
-- **matchingFiles** — `vendored-detector.ts:292-295`
-- **rel** — `vendored-detector.ts:293-293`
-- **avgLoc** — `vendored-detector.ts:297-297`
-- **step** — `vendored-detector.ts:314-314`
-- **totalLines** — `vendored-detector.ts:315-315`
-- **sampled** — `vendored-detector.ts:316-316`
-- **i** — `vendored-detector.ts:318-318`
-- **stat** — `vendored-detector.ts:320-320`
-- **content** — `vendored-detector.ts:322-322`
-- **normalized** — `vendored-detector.ts:343-343`

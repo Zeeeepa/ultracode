@@ -15,7 +15,7 @@ import { log } from "../../logging/index.js";
 import { isBunRuntime } from "../../utils/runtime-detection.js";
 
 export interface LLMConfig {
-  provider: "ollama" | "tgi" | "openai" | "docker-model-runner" | "llamacpp" | "claude-code";
+  provider: "ollama" | "tgi" | "openai" | "docker-model-runner" | "llamacpp" | "claude-code" | "claude_cli";
   baseUrl: string;
   model: string;
   apiKey?: string | undefined;
@@ -808,6 +808,52 @@ function getClaudeCommand(): { cmd: string; args: string[] } | null {
 }
 
 /**
+ * Parse Claude CLI output — find the "result" object.
+ * Claude CLI outputs either:
+ *   1. A JSON array on one line: [{...init...},{...assistant...},{...result...}]
+ *   2. JSON Lines (one JSON per line, older/future formats)
+ *   3. A single JSON object (legacy)
+ */
+function parseClaudeJsonLines(stdout: string): ClaudeCodeResponse | null {
+  const trimmed = stdout.trim();
+
+  // Try as JSON array first (most common format: [{...},{...},{...}])
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed) as unknown[];
+      for (let i = arr.length - 1; i >= 0; i--) {
+        const obj = arr[i] as Record<string, unknown>;
+        if (obj?.["type"] === "result") return obj as unknown as ClaudeCodeResponse;
+      }
+    } catch {
+      // Not a valid array, try other formats
+    }
+  }
+
+  // Try as JSON Lines (one JSON per line)
+  const lines = trimmed.split("\n");
+  if (lines.length > 1) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const obj = JSON.parse(lines[i]!);
+        if (obj.type === "result") return obj as ClaudeCodeResponse;
+      } catch {
+        // Not valid JSON, skip
+      }
+    }
+  }
+
+  // Fallback: try as single JSON object (legacy)
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj.type === "result") return obj as ClaudeCodeResponse;
+    return obj as ClaudeCodeResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Claude Code CLI Provider
  * Uses `claude -p` command for text generation via existing Claude Code installation
  * Auto-detects runtime: Bun → bunx claude, Node → npx claude
@@ -1040,7 +1086,13 @@ export class ClaudeCodeProvider implements LLMProvider {
           return;
         }
         try {
-          const parsed = JSON.parse(stdout) as ClaudeCodeResponse;
+          // Claude CLI outputs JSON Lines — find the "result" line
+          const parsed = parseClaudeJsonLines(stdout);
+          if (!parsed) {
+            log.e("CLAUDE_CODE", "json_parse_error", { stdout: stdout.slice(0, 200) });
+            resolve(null);
+            return;
+          }
 
           // Accumulate usage statistics
           ClaudeCodeProvider._totalUsage.requests++;
@@ -1073,46 +1125,37 @@ export class ClaudeCodeProvider implements LLMProvider {
   }
 
   /**
-   * Windows-specific Claude CLI execution using temp files.
-   * Zig compat: avoids pipe encoding issues on Windows by writing prompt
-   * to a temp file as raw UTF-8, then reading output from another temp file.
+   * Windows-specific Claude CLI execution.
+   * Uses execFileSync with `input` option for stdin (no cmd /c, no temp files).
+   * This avoids Windows cmd.exe quote-parsing issues that broke the previous approach.
    */
   private async runClaudeWindows(cmd: string, args: string[], prompt: string): Promise<ClaudeCodeResponse | null> {
-    const { writeFileSync: writeFs, readFileSync: readFs, unlinkSync } = await import("node:fs");
-    const { join } = await import("node:path");
     const { execFileSync } = await import("node:child_process");
 
-    const tmpDir = process.env["TEMP"] || process.env["TMP"] || ".";
-    const tid = process.pid;
-    const promptPath = join(tmpDir, `.autodoc_in.${tid}.tmp`);
-    const outputPath = join(tmpDir, `.autodoc_out.${tid}.tmp`);
-
     try {
-      // Write prompt as raw UTF-8 to temp file
-      writeFs(promptPath, Buffer.from(prompt, "utf-8"));
+      log.d("CLAUDE_CODE", "win_exec", { cmd, argsCount: args.length });
 
-      // Build command: pipe temp file as stdin, capture stdout to temp file
-      // Use cmd /c with input redirection — simpler than threads
-      const fullCmd = `"${cmd}" ${args.map((a) => (a === "" ? '""' : `"${a}"`)).join(" ")} < "${promptPath}" > "${outputPath}"`;
-
-      log.d("CLAUDE_CODE", "win_exec", { cmd: fullCmd.slice(0, 200) });
-
-      execFileSync("cmd", ["/c", fullCmd], {
+      const stdout = execFileSync(cmd, args, {
+        input: Buffer.from(prompt, "utf-8"),
         windowsHide: true,
         timeout: 120000,
-        stdio: ["ignore", "ignore", "ignore"],
+        maxBuffer: 10 * 1024 * 1024, // 10MB for large doc responses
+        encoding: "utf-8",
         env: { ...process.env, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" },
       });
 
-      // Read output
-      const response = readFs(outputPath, "utf-8");
-      if (!response || response.length === 0) {
+      if (!stdout || stdout.length === 0) {
         log.w("CLAUDE_CODE", "win_empty_response");
         return null;
       }
 
-      log.d("CLAUDE_CODE", "win_response", { len: response.length });
-      const parsed = JSON.parse(response) as ClaudeCodeResponse;
+      log.d("CLAUDE_CODE", "win_response", { len: stdout.length });
+
+      const parsed = parseClaudeJsonLines(stdout);
+      if (!parsed) {
+        log.e("CLAUDE_CODE", "win_parse_error", { stdout: stdout.slice(0, 300) });
+        return null;
+      }
 
       // Accumulate usage
       ClaudeCodeProvider._totalUsage.requests++;
@@ -1125,20 +1168,11 @@ export class ClaudeCodeProvider implements LLMProvider {
 
       return parsed;
     } catch (err) {
-      log.e("CLAUDE_CODE", "win_error", { err: (err as Error).message?.slice(0, 300) });
+      const msg = (err as Error).message || "";
+      // Include stderr from execFileSync error if available
+      const stderr = (err as any).stderr?.toString?.()?.slice(0, 300) || "";
+      log.e("CLAUDE_CODE", "win_error", { err: msg.slice(0, 300), stderr });
       return null;
-    } finally {
-      // Cleanup temp files
-      try {
-        unlinkSync(promptPath);
-      } catch {
-        /* ok */
-      }
-      try {
-        unlinkSync(outputPath);
-      } catch {
-        /* ok */
-      }
     }
   }
 }
@@ -1317,7 +1351,7 @@ export async function detectLLMProviders(): Promise<{
         nGpuLayers,
       }),
     );
-  } else if (savedConfig?.provider === "claude-code") {
+  } else if (savedConfig?.provider === "claude-code" || savedConfig?.provider === "claude_cli") {
     providers.push(
       new ClaudeCodeProvider({
         model: savedConfig.model || "haiku",
@@ -1373,7 +1407,9 @@ export async function detectLLMProviders(): Promise<{
   // Prefer configured provider > Claude Code > Docker Model Runner > Ollama > TGI > OpenAI
   let recommended: LLMProvider | null = null;
   if (savedConfig?.provider) {
-    recommended = available.find((p) => p.name === savedConfig.provider) || null;
+    // Normalize provider name: "claude_cli" → "claude-code" (Zig config compat)
+    const normalizedProvider = savedConfig.provider === "claude_cli" ? "claude-code" : savedConfig.provider;
+    recommended = available.find((p) => p.name === normalizedProvider) || null;
   }
   if (!recommended) {
     recommended =
@@ -1429,6 +1465,7 @@ export function createLLMProvider(config: LLMConfig): LLMProvider {
         nGpuLayers: config.nGpuLayers, // Auto-detected if not set
       });
     case "claude-code":
+    case "claude_cli":
       return new ClaudeCodeProvider({
         model: config.model || "haiku",
       });

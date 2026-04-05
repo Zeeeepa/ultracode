@@ -1,6 +1,6 @@
 # Setup
 
-> Interactive setup module that guides users through selecting, configuring, and installing embedding and LLM providers based on detected hardware capabilities.
+Interactive setup wizard for AI coding agents with hardware detection, embedding provider installation, LLM configuration, and MCP server auto-registration.
 
 ## Overview
 

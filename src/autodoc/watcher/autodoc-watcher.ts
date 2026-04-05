@@ -738,8 +738,81 @@ export class AutoDocWatcher {
       } else {
         log.d("AUTODOCWATCH", "index_completed_all_exist", { total_modules: modules.length });
       }
+
+      // Background LLM enrichment for existing files with pending descriptions
+      const useLlm = await this.shouldUseLlm();
+      if (useLlm) {
+        this.enrichPendingModules(modules).catch((e) => {
+          log.w("AUTODOCWATCH", "enrich_pending_error", { err: (e as Error).message });
+        });
+      }
     } catch (error) {
       log.e("AUTODOCWATCH", "index_completed_error", { error: String(error) });
+    }
+  }
+
+  /**
+   * Background enrichment: find AUTODOC.md files with "## New (pending description)"
+   * and run LLM enrichment on them. Non-blocking, fire-and-forget.
+   */
+  private async enrichPendingModules(modules: ModuleInfo[]): Promise<void> {
+    const PENDING_MARKER = "## New (pending description)";
+    const pendingPaths: { modPath: string; autodocPath: string; content: string }[] = [];
+
+    for (const mod of modules) {
+      const autodocPath = path.join(mod.path, MODULE_DOC_FILENAME);
+      try {
+        const content = await readText(autodocPath);
+        if (content?.includes(PENDING_MARKER)) {
+          pendingPaths.push({ modPath: mod.path, autodocPath, content });
+        }
+      } catch {
+        // File doesn't exist or unreadable — skip
+      }
+    }
+
+    if (pendingPaths.length === 0) return;
+
+    log.i("AUTODOCWATCH", "enrich_pending_start", { count: pendingPaths.length });
+
+    const { enrichSingleDoc } = await import("../llm/doc-writer.js");
+    const { detectLLMProviders } = await import("../llm/llm-provider.js");
+    const { readCodeSnippets } = await import("../generator/batch-autodoc.js");
+
+    const { recommended } = await detectLLMProviders();
+    if (!recommended) {
+      log.w("AUTODOCWATCH", "enrich_pending_no_llm");
+      return;
+    }
+
+    let enriched = 0;
+    for (const { modPath, autodocPath, content } of pendingPaths) {
+      try {
+        const dirNorm = modPath.replace(/\\/g, "/");
+        const codeCtx = await readCodeSnippets(modPath);
+        const result = await enrichSingleDoc(
+          recommended,
+          { entityId: `dir:${dirNorm}`, content, sourceHash: "", version: 1 },
+          "incremental",
+          codeCtx,
+        );
+
+        if (result) {
+          await writeFile(autodocPath, result.enriched);
+          enriched++;
+          log.d("AUTODOCWATCH", "enrich_pending_done", { module: path.basename(modPath) });
+        }
+      } catch (err) {
+        log.w("AUTODOCWATCH", "enrich_pending_module_err", {
+          module: path.basename(modPath),
+          err: (err as Error).message,
+        });
+      }
+    }
+
+    if (enriched > 0) {
+      log.i("AUTODOCWATCH", "enrich_pending_complete", { enriched, total: pendingPaths.length });
+      ClaudeCodeProvider.logUsageStats();
     }
   }
 

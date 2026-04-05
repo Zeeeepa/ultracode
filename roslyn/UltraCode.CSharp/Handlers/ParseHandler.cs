@@ -546,6 +546,7 @@ public sealed class ParseHandler
         foreach (var inv in invocations)
         {
             var lineSpan = inv.GetLocation().GetLineSpan();
+            var conditions = ExtractEnclosingConditions(inv, node);
 
             switch (inv.Expression)
             {
@@ -555,6 +556,7 @@ public sealed class ParseHandler
                         Name = memberAccess.Name.Identifier.Text,
                         Receiver = memberAccess.Expression.ToString(),
                         Line = lineSpan.StartLinePosition.Line + 1,
+                        Conditions = conditions,
                     });
                     break;
                 case IdentifierNameSyntax identifier:
@@ -562,6 +564,7 @@ public sealed class ParseHandler
                     {
                         Name = identifier.Identifier.Text,
                         Line = lineSpan.StartLinePosition.Line + 1,
+                        Conditions = conditions,
                     });
                     break;
                 default:
@@ -569,12 +572,114 @@ public sealed class ParseHandler
                     {
                         Name = inv.Expression.ToString(),
                         Line = lineSpan.StartLinePosition.Line + 1,
+                        Conditions = conditions,
                     });
                     break;
             }
         }
 
         return calls.Count > 0 ? calls : null;
+    }
+
+    /// <summary>
+    /// Walk up the Roslyn syntax tree from an invocation, collecting enclosing
+    /// if/switch/case/catch/for/while conditions. Stops at the containing method/function body.
+    /// </summary>
+    private static List<string>? ExtractEnclosingConditions(SyntaxNode invocation, SyntaxNode stopAt)
+    {
+        var conditions = new List<string>();
+        const int maxConditions = 6;
+        const int maxCondLen = 120;
+
+        foreach (var ancestor in invocation.Ancestors())
+        {
+            if (ancestor == stopAt) break;
+            if (conditions.Count >= maxConditions) break;
+
+            switch (ancestor)
+            {
+                case IfStatementSyntax ifStmt:
+                {
+                    var condText = ifStmt.Condition.ToString();
+                    if (condText.Length > maxCondLen) condText = condText[..maxCondLen] + "...";
+                    // Determine if invocation is in the else branch
+                    var inElse = ifStmt.Else != null && ifStmt.Else.Span.Contains(invocation.Span);
+                    conditions.Add(inElse ? $"[else] if ({condText})" : $"if ({condText})");
+                    break;
+                }
+                case SwitchStatementSyntax switchStmt:
+                {
+                    var expr = switchStmt.Expression.ToString();
+                    if (expr.Length > maxCondLen) expr = expr[..maxCondLen] + "...";
+                    conditions.Add($"switch ({expr})");
+                    break;
+                }
+                case SwitchExpressionSyntax switchExpr:
+                {
+                    var expr = switchExpr.GoverningExpression.ToString();
+                    if (expr.Length > maxCondLen) expr = expr[..maxCondLen] + "...";
+                    conditions.Add($"switch ({expr})");
+                    break;
+                }
+                case CaseSwitchLabelSyntax caseLabel:
+                {
+                    conditions.Add($"case {caseLabel.Value}");
+                    break;
+                }
+                case CasePatternSwitchLabelSyntax patternLabel:
+                {
+                    var pat = patternLabel.Pattern.ToString();
+                    if (pat.Length > maxCondLen) pat = pat[..maxCondLen] + "...";
+                    conditions.Add($"case {pat}");
+                    break;
+                }
+                case ForStatementSyntax forStmt:
+                {
+                    var cond = forStmt.Condition?.ToString() ?? "";
+                    conditions.Add(cond.Length > 0 && cond.Length <= maxCondLen
+                        ? $"[loop] for ({cond})"
+                        : $"[loop] for :L{forStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1}");
+                    break;
+                }
+                case ForEachStatementSyntax forEachStmt:
+                {
+                    var expr = forEachStmt.Expression.ToString();
+                    if (expr.Length > maxCondLen) expr = expr[..maxCondLen] + "...";
+                    conditions.Add($"[loop] foreach ({forEachStmt.Identifier} in {expr})");
+                    break;
+                }
+                case WhileStatementSyntax whileStmt:
+                {
+                    var cond = whileStmt.Condition.ToString();
+                    if (cond.Length > maxCondLen) cond = cond[..maxCondLen] + "...";
+                    conditions.Add($"[loop] while ({cond})");
+                    break;
+                }
+                case DoStatementSyntax doStmt:
+                {
+                    var cond = doStmt.Condition.ToString();
+                    if (cond.Length > maxCondLen) cond = cond[..maxCondLen] + "...";
+                    conditions.Add($"[loop] do-while ({cond})");
+                    break;
+                }
+                case CatchClauseSyntax catchClause:
+                {
+                    var catchType = catchClause.Declaration?.Type.ToString() ?? "";
+                    conditions.Add(catchType.Length > 0 ? $"[catch] ({catchType})" : "[catch]");
+                    break;
+                }
+                case ConditionalExpressionSyntax ternary:
+                {
+                    var cond = ternary.Condition.ToString();
+                    if (cond.Length > maxCondLen) cond = cond[..maxCondLen] + "...";
+                    var inFalse = ternary.WhenFalse.Span.Contains(invocation.Span);
+                    conditions.Add(inFalse ? $"[else] ternary ({cond})" : $"ternary ({cond})");
+                    break;
+                }
+            }
+        }
+
+        return conditions.Count > 0 ? conditions : null;
     }
 
     private static int CalculateCyclomaticComplexity(SyntaxNode node)

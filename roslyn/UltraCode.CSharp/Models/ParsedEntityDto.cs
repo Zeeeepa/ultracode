@@ -195,6 +195,14 @@ public sealed class CallInfoDto
 
     [JsonPropertyName("line")]
     public int Line { get; set; }
+
+    /// <summary>
+    /// Enclosing conditions (if/switch/case/catch) at the call site.
+    /// Extracted by walking Ancestors() from the InvocationExpression.
+    /// </summary>
+    [JsonPropertyName("conditions")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Conditions { get; set; }
 }
 
 public sealed class DiagnosticDto

@@ -1,5 +1,7 @@
 # Tools Module
 
+MCP tool handlers, schemas, and utilities for code analysis, agent metrics, and system integration.
+
 ## Overview
 
 Central MCP tool infrastructure providing the bridge between MCP protocol and internal subsystems (agents, semantic search, graph storage, code analysis, AutoDoc). The module contains `ToolRegistry` with lazy-loaded handler groups (~80% deferred imports), `BaseToolHandler` abstract base class with built-in response limiting and argument validation, and 60+ handler implementations organized into 12 lazy-loaded categories plus 6 eager-loaded utilities. Reduces cold start from ~2s to <500ms via deferred loading; enforces 50KB response limits via binary-search truncation and serializes heavy analysis tools through a concurrency queue to prevent memory spikes.
