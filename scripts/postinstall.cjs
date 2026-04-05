@@ -46,6 +46,12 @@ try {
 
 const hasTerminal = ttyWriteFd != null;
 
+// Detect if running as a lifecycle script (postinstall) under any package manager.
+// npm sets npm_lifecycle_event; bun --trust may not, so also check bun-specific signals.
+const isLifecycleScript = !!process.env.npm_lifecycle_event
+  || (!!process.versions.bun && !!process.env.npm_command)
+  || (!!process.versions.bun && process.argv[1] && process.argv[1].includes("postinstall"));
+
 const log = (...args) => {
   const msg = args.join(" ") + "\n";
   if (ttyWriteFd != null) {
@@ -210,7 +216,8 @@ async function handleAppleSilicon() {
     `${colors.dim}Without Metal, WASM SIMD fallback will be used (slower).${colors.reset}`,
   ]);
 
-  const shouldBuild = await askYesNo("Build Metal backend now?");
+  // In lifecycle scripts (npm/bun postinstall) interactive prompts hang — skip to manual build
+  const shouldBuild = isLifecycleScript ? false : await askYesNo("Build Metal backend now?");
 
   if (shouldBuild) {
     log();
@@ -321,29 +328,17 @@ function getTtyStdio() {
 }
 
 async function runSetupWizard() {
-  // Skip if no terminal at all (CI, piped output, headless)
-  // npm/bun lifecycle scripts cannot reliably use stdin.
-  // Show setup instructions instead of interactive prompts.
-  if (!hasTerminal || !ttyReadable || process.env.npm_lifecycle_event === "postinstall") {
-    const isBun = !!process.versions.bun || !!process.env.BUN_INSTALL;
-
-    if (isBun) {
-      printBox("UltraCode installed!", [
-        `${colors.green}✓${colors.reset} To configure semantic search (embeddings, GPU), run:`,
-        "",
-        `  ${colors.bright}ultracode-setup${colors.reset}`,
-        "",
-        `${colors.dim}Or start using immediately — semantic search auto-configures on first use.${colors.reset}`,
-      ]);
-    } else {
-      printBox("UltraCode installed!", [
-        `${colors.green}✓${colors.reset} To configure semantic search (embeddings, GPU), run:`,
-        "",
-        `  ${colors.bright}ultracode-setup${colors.reset}`,
-        "",
-        `${colors.dim}Or start using immediately — semantic search auto-configures on first use.${colors.reset}`,
-      ]);
-    }
+  // Skip if no terminal, no tty, or running inside a package manager lifecycle script.
+  // Lifecycle scripts cannot reliably use interactive stdin (npm buffers stdio,
+  // bun --trust may not forward terminal input). Show setup instructions instead.
+  if (!hasTerminal || !ttyReadable || isLifecycleScript) {
+    printBox("UltraCode installed!", [
+      `${colors.green}✓${colors.reset} To configure semantic search (embeddings, GPU), run:`,
+      "",
+      `  ${colors.bright}ultracode-setup${colors.reset}`,
+      "",
+      `${colors.dim}Or start using immediately — semantic search auto-configures on first use.${colors.reset}`,
+    ]);
     return;
   }
 
