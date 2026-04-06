@@ -704,8 +704,11 @@ export class VectorStore {
             this.autoDocInitialized = true;
           }
 
-          for (const r of docResults) {
-            const doc = await adm.getDocument(r.id);
+          // Parallel fetch all docs at once instead of sequential await
+          const allDocsPhase1 = await Promise.all(docResults.map((r) => adm!.getDocument(r.id)));
+          for (let i = 0; i < docResults.length; i++) {
+            const r = docResults[i]!;
+            const doc = allDocsPhase1[i];
             if (doc) {
               enrichedDocs.push({
                 ...r,
@@ -787,12 +790,23 @@ export class VectorStore {
 
           const entityRefsFromDocs = new Map<string, EntityRefInfo>();
 
-          for (const docResult of docsForEnrichment) {
-            const doc = await adm.getDocument(docResult.id);
-            if (!doc) continue;
+          // Phase 2a: Parallel fetch all docs
+          const allDocsPhase2 = await Promise.all(docsForEnrichment.map((d) => adm.getDocument(d.id)));
 
-            // Get all references from the document
-            const refs = await adm.getReferences(doc.filePath);
+          // Phase 2b: Parallel fetch refs for existing docs
+          const validDocEntries: Array<{ idx: number; doc: NonNullable<(typeof allDocsPhase2)[0]> }> = [];
+          for (let i = 0; i < allDocsPhase2.length; i++) {
+            const doc = allDocsPhase2[i];
+            if (doc) validDocEntries.push({ idx: i, doc });
+          }
+
+          const allRefsPhase2 = await Promise.all(validDocEntries.map(({ doc }) => adm.getReferences(doc.filePath)));
+
+          // Phase 2c: Process collected data (in-memory, fast)
+          for (let j = 0; j < validDocEntries.length; j++) {
+            const { idx, doc } = validDocEntries[j]!;
+            const docResult = docsForEnrichment[idx]!;
+            const refs = allRefsPhase2[j]!;
 
             // Verbose logging for diagnostics
             if (this.debugMode) {
@@ -833,7 +847,6 @@ export class VectorStore {
             for (const ref of entityRefs) {
               const entityId = ref.targetId!;
               if (!entityRefsFromDocs.has(entityId)) {
-                // Parse section title (doc.section may be null)
                 const sectionTitle = doc.section || "Overview";
 
                 entityRefsFromDocs.set(entityId, {

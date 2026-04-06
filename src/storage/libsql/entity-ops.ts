@@ -987,6 +987,46 @@ export class EntityOperations {
   }
 
   /**
+   * Batch delete entities by IDs. Single write lock, chunked IN-clause queries.
+   * Much faster than calling deleteEntity() per ID (avoids _w() overhead per call).
+   */
+  async deleteEntitiesBatch(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    return this._w(async () => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
+
+      const { projectHash, branchName, baseBranch } = this.getContext();
+
+      // On feature branch: add tombstones for all IDs
+      if (baseBranch && this.tombstoneAdder) {
+        for (const id of ids) {
+          await this.tombstoneAdder(id, "entity");
+        }
+      }
+
+      // Chunk to stay under SQLite parameter limit (999)
+      const CHUNK = 900;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const batch = ids.slice(i, i + CHUNK);
+        const placeholders = batch.map(() => "?").join(",");
+
+        // Delete entities
+        await client.execute({
+          sql: `DELETE FROM entities WHERE id IN (${placeholders}) AND project_hash = ? AND branch_name = ?`,
+          args: [...batch, projectHash, branchName],
+        });
+
+        // Delete name tokens
+        await client.execute({
+          sql: `DELETE FROM name_tokens WHERE entity_id IN (${placeholders}) AND project_hash = ? AND branch_name = ?`,
+          args: [...batch, projectHash, branchName],
+        });
+      }
+    }); // end _w
+  }
+
+  /**
    * Get entity IDs by file path (for FAISS cleanup) (layered: delta + base - tombstones)
    */
   async getEntityIdsByFilePath(filePath: string): Promise<string[]> {

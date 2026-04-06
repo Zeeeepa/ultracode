@@ -388,6 +388,9 @@ export class ConfigLoader {
         concurrency: pickNum(undefined, "TEI_CONCURRENCY", undefined),
         checkServer: process.env["TEI_CHECK_SERVER"] !== "false",
       },
+      // Batching: controls request pressure during indexing
+      queueBatchSize: pickNum(yEmb?.queueBatchSize, "MCP_EMBEDDING_QUEUE_BATCH_SIZE", undefined),
+      parallelBatches: pickNum(yEmb?.parallelBatches, "MCP_EMBEDDING_PARALLEL_BATCHES", undefined),
       // Two-phase mode for stability (separate embedding from DB writes)
       twoPhaseMode: pickBool(yEmb?.twoPhaseMode, "MCP_EMBEDDING_TWO_PHASE", false),
       // Layered FAISS index (base + delta) - enabled by default

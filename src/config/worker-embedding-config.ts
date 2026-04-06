@@ -237,7 +237,7 @@ function resolveProviderConfig(embeddingConfig: CombinedEmbeddingConfig): {
       providerOptions: {
         baseUrl: teiConfig.endpoint || teiConfig.baseUrl || "http://127.0.0.1:8282",
         timeoutMs: teiConfig.timeoutMs,
-        concurrency: teiConfig.concurrency, // default 16 in provider, can override here
+        concurrency: teiConfig.concurrency, // default 8 in provider, can override here
         maxBatchSize: teiConfig.max_client_batch_size, // TEI max_client_batch_size (not max_batch_tokens)
       },
     };
@@ -466,8 +466,12 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   // Resolve dimensions and context tokens
   const { dimensions, contextTokens } = resolveModelDimensions(embeddingConfig, modelName);
 
-  // Compute queue batch size for centralized mode
-  const queueBatchSize = computeQueueBatchSize(providerKind, providerOptions);
+  // Compute queue batch size: YAML override > computed default
+  const yamlQueueBatchSize = config.mcp?.embedding?.queueBatchSize;
+  const queueBatchSize = yamlQueueBatchSize ?? computeQueueBatchSize(providerKind, providerOptions);
+
+  // Read parallelBatches from YAML config (always, even when semantic-config exists)
+  const yamlParallelBatches = config.mcp?.embedding?.parallelBatches;
 
   const result: WorkerEmbeddingConfig = {
     enabled: true,
@@ -477,6 +481,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     contextTokens,
     batchSize,
     queueBatchSize,
+    parallelBatches: yamlParallelBatches, // from YAML config → accumulator
     dimensions,
     providerOptions,
     // All providers use centralized embedding mode:

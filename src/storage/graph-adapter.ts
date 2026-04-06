@@ -420,6 +420,7 @@ export class GraphAdapter {
   searchEntitiesInDirectory = (directoryPath: string): Promise<Entity[]> =>
     this.entityOps.searchEntitiesInDirectory(directoryPath);
   deleteEntity = (id: string): Promise<void> => this.entityOps.deleteEntity(id);
+  deleteEntitiesBatch = (ids: string[]): Promise<void> => this.entityOps.deleteEntitiesBatch(ids);
   getEntityIdsByFilePath = (filePath: string): Promise<string[]> => this.entityOps.getEntityIdsByFilePath(filePath);
   deleteEntitiesByFilePath = (filePath: string): Promise<string[]> => this.entityOps.deleteEntitiesByFilePath(filePath);
   getAllEntities = (): Promise<Entity[]> => this.entityOps.getAllEntities();

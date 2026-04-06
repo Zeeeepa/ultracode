@@ -86,10 +86,9 @@ export function printError(msg: string): void {
 }
 
 export function prompt(question: string): Promise<string> {
-  writeErr(question);
-
   // Strategy 1: Use readline on process.stdin if it's a TTY
   if (process.stdin.isTTY) {
+    console.error(question);
     const rl = rlModule.createInterface({ input: process.stdin, output: process.stderr });
     return new Promise<string>((resolve) => {
       rl.question("", (answer: string) => {
@@ -100,20 +99,28 @@ export function prompt(question: string): Promise<string> {
   }
 
   // Strategy 2: Synchronous read from terminal device
-  // Unix: /dev/tty always works. Windows: CON only works if console is attached.
-  const ttyDevice = process.platform === "win32" ? "CON" : "/dev/tty";
+  // Unix: /dev/tty always works. Windows: \\.\CON opens the console device.
+  // Strategy 2: Synchronous read/write via terminal device
+  // Windows: \\.\CON is both input and output. Unix: /dev/tty.
+  const ttyDevice = process.platform === "win32" ? "\\\\.\\CON" : "/dev/tty";
   try {
-    const fd = openSync(ttyDevice, "r");
+    // Open for writing to display prompt directly on console
+    const wfd = openSync(ttyDevice, "w");
+    writeSync(wfd, question);
+    closeSync(wfd);
+
+    // Open for reading user input
+    const rfd = openSync(ttyDevice, "r");
     const buf = Buffer.alloc(1024);
     let line = "";
     while (true) {
-      const bytesRead = readSync(fd, buf, 0, 1, null);
+      const bytesRead = readSync(rfd, buf, 0, 1, null);
       if (bytesRead === 0) break;
       const ch = buf.toString("utf8", 0, 1);
       if (ch === "\n" || ch === "\r") break;
       line += ch;
     }
-    closeSync(fd);
+    closeSync(rfd);
     return Promise.resolve(line.trim());
   } catch {
     // No TTY — return empty (defaults will be used)

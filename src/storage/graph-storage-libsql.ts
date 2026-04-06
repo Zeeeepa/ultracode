@@ -463,11 +463,15 @@ export class GraphStorageLibSQL implements GraphStorage {
   async findIncomingRelationshipsByName(entityName: string, types?: RelationType[]): Promise<Relationship[]> {
     // Find entities with matching name
     const entities = await this.adapter.searchEntities({ namePattern: entityName });
+    if (entities.length === 0) return [];
+
+    // Parallel fetch relationships for all matched entities
+    const allRels = await Promise.all(entities.map((e) => this.adapter.getRelationshipsForEntity(e.id)));
 
     const results: Relationship[] = [];
-    for (const entity of entities) {
-      const rels = await this.adapter.getRelationshipsForEntity(entity.id);
-      const incoming = rels.filter((r) => r.toId === entity.id);
+    for (let i = 0; i < entities.length; i++) {
+      const entity = entities[i]!;
+      const incoming = allRels[i]!.filter((r) => r.toId === entity.id);
 
       if (types && types.length > 0) {
         results.push(...incoming.filter((r) => types.includes(r.type)));
@@ -565,31 +569,41 @@ export class GraphStorageLibSQL implements GraphStorage {
     const relationships = new Map<string, Relationship>();
     const visited = new Set<string>();
 
-    // BFS traversal
-    const queue: Array<{ id: string; level: number }> = [{ id: entityId, level: 0 }];
+    // Level-based BFS: fetch all nodes per level in parallel
+    let currentLevel = [entityId];
+    for (let level = 0; level <= maxDepth && currentLevel.length > 0; level++) {
+      // Filter out already-visited IDs
+      const toFetch = currentLevel.filter((id) => !visited.has(id));
+      if (toFetch.length === 0) break;
 
-    while (queue.length > 0) {
-      const { id, level } = queue.shift()!;
+      for (const id of toFetch) visited.add(id);
 
-      if (visited.has(id) || level > maxDepth) continue;
-      visited.add(id);
+      // Parallel fetch: entities + relationships for this level
+      const [fetchedEntities, fetchedRels] = await Promise.all([
+        Promise.all(toFetch.map((id) => this.adapter.getEntity(id))),
+        Promise.all(toFetch.map((id) => this.adapter.getRelationshipsForEntity(id))),
+      ]);
 
-      const entity = await this.adapter.getEntity(id);
-      if (entity) {
-        entities.set(id, entity);
+      const nextLevel: string[] = [];
+      for (let i = 0; i < toFetch.length; i++) {
+        const entity = fetchedEntities[i];
+        if (entity) {
+          entities.set(toFetch[i]!, entity);
 
-        const rels = await this.adapter.getRelationshipsForEntity(id);
-        for (const rel of rels) {
-          relationships.set(rel.id, rel);
+          for (const rel of fetchedRels[i]!) {
+            relationships.set(rel.id, rel);
 
-          if (level < maxDepth) {
-            const nextId = rel.fromId === id ? rel.toId : rel.fromId;
-            if (!visited.has(nextId)) {
-              queue.push({ id: nextId, level: level + 1 });
+            if (level < maxDepth) {
+              const nextId = rel.fromId === toFetch[i] ? rel.toId : rel.fromId;
+              if (!visited.has(nextId)) {
+                nextLevel.push(nextId);
+              }
             }
           }
         }
       }
+
+      currentLevel = nextLevel;
     }
 
     return {

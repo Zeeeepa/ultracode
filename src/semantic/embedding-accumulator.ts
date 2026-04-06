@@ -75,8 +75,8 @@ export interface AccumulatorStats {
 const DEFAULT_CONFIG: AccumulatorConfig = {
   flushThreshold: 1000, // Incremental flush every 1000 embeddings (maximize TEI+FAISS overlap)
   dimensions: 384, // Default for e5-small, MiniLM models (most common)
-  queueBatchSize: 256, // Send 256 texts per request (TEI max_client_batch_size=500)
-  parallelBatches: 16, // TEI GPU can handle high concurrency
+  queueBatchSize: 256, // Send 256 texts per request (TEI max_client_batch_size)
+  parallelBatches: 3, // Conservative: 3 × 256 = 768 texts in flight (avoids TEI 429)
 };
 
 export class EmbeddingAccumulator {

@@ -45,6 +45,10 @@ mcp:
     # Options: "english" | "multilingual"
     queryLanguage: "english"  # Set to "multilingual" if using ibm/granite-embedding:278m or granite-embedding
 
+    # Batching: controls TEI/OVMS/Ollama request pressure during indexing
+    queueBatchSize: 256            # Texts per HTTP request to embedding server
+    parallelBatches: 3             # Max concurrent HTTP requests (3 × 256 = 768 texts in flight)
+
     # Two-phase mode: Generate embeddings → dump to disk → close OpenVINO → insert to LibSQL
     # Workaround for Bun crash when OpenVINO + LibSQL native modules run concurrently
     # Set to true if you experience crashes during indexing with OpenVINO on Bun
@@ -55,7 +59,7 @@ mcp:
     tei:
       baseUrl: "http://127.0.0.1:8080"  # TEI server URL (Docker container)
       timeoutMs: 30000                  # 30 seconds timeout
-      concurrency: 16                   # High parallelism for GPU saturation
+      concurrency: 8                    # Balanced: avoids TEI 429 overload
       checkServer: true                 # Auto-start Docker container if stopped
 
     # Ollama Configuration
@@ -72,7 +76,7 @@ mcp:
     ovms:
       baseUrl: "http://127.0.0.1:8082"
       timeoutMs: 120000                 # 2 minutes (OVMS can be slow on CPU)
-      concurrency: 16                   # Parallel mini-batch requests
+      concurrency: 8                    # Parallel mini-batch requests
       miniBatchSize: 64                 # Texts per OVMS request (GPU: 64, CPU: 32)
       protocol: "rest"                  # Options: rest, grpc
       checkServer: true

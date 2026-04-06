@@ -47,9 +47,9 @@ export class TEIProvider implements EmbeddingProvider {
     this.log = opts.logger;
     this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:8282";
     this.timeoutMs = opts.timeoutMs ?? 30_000;
-    this.concurrency = Math.max(1, opts.concurrency ?? 16); // High concurrency for GPU saturation
+    this.concurrency = Math.max(1, opts.concurrency ?? 8); // Balanced default: avoids TEI 429 while keeping throughput
     this.checkServer = opts.checkServer !== false;
-    this.maxBatchSize = opts.maxBatchSize ?? 500; // TEI default max_client_batch_size
+    this.maxBatchSize = opts.maxBatchSize ?? 512; // Matches TEI --max-batch-requests / --max-client-batch-size
 
     this.info = {
       name: "tei",
@@ -97,8 +97,8 @@ export class TEIProvider implements EmbeddingProvider {
           model_id?: string | undefined;
         };
         this.info.maxTokens = modelInfo.max_input_length || 512;
-        // Use server's max_client_batch_size if available and not overridden
-        if (modelInfo.max_client_batch_size && this.maxBatchSize === 500) {
+        // Use server's max_client_batch_size if available and not overridden by user
+        if (modelInfo.max_client_batch_size && this.maxBatchSize === 512) {
           this.maxBatchSize = modelInfo.max_client_batch_size;
         }
         this.log?.debug("TEI model info", {

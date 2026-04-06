@@ -127,8 +127,8 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
     tei_config?: { max_batch_tokens?: number; max_client_batch_size?: number; dtype?: string };
   };
   const teiConfig = modelExtended.tei_config || {};
-  const maxBatchTokens = teiConfig.max_batch_tokens || 16384;
-  const maxClientBatchSize = teiConfig.max_client_batch_size || 500;
+  const maxBatchTokens = teiConfig.max_batch_tokens || 32768;
+  const maxClientBatchSize = teiConfig.max_client_batch_size || 512;
   const dtype = teiConfig.dtype; // e.g. "float32" for models that don't support fp16
 
   let dockerCmd = `docker run -d --name ${containerName} -p ${port}:80 --restart unless-stopped`;
@@ -151,8 +151,9 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
   if (dtype) {
     dockerCmd += ` --dtype ${dtype}`;
   }
-  dockerCmd += ` --max-concurrent-requests 512`;
+  dockerCmd += ` --max-concurrent-requests 1024`;
   dockerCmd += ` --max-batch-tokens ${maxBatchTokens}`;
+  dockerCmd += ` --max-batch-requests ${maxClientBatchSize}`;
   dockerCmd += ` --max-client-batch-size ${maxClientBatchSize}`;
 
   console.error(`[DEBUG] Running: ${dockerCmd}`);

@@ -215,8 +215,10 @@ export interface WorkerEmbeddingConfig {
   maxTokens: number;
   /** How many items per batch when generating embeddings */
   batchSize: number;
-  /** Texts per HTTP request in centralized mode (default 128) */
+  /** Texts per HTTP request in centralized mode (default 256) */
   queueBatchSize?: number | undefined;
+  /** Max concurrent HTTP requests to embedding server (default 4) */
+  parallelBatches?: number | undefined;
   /** Output vector dimensionality (e.g. 384 for e5-small) */
   dimensions?: number | undefined;
   /** 0-based index used for endpoint assignment across workers */

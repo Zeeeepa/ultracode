@@ -117,26 +117,38 @@ export async function detectUsage(storage: GraphStorage, config: UsageDetectorCo
 }
 
 export async function applyUsageMetadata(storage: GraphStorage, usage: UsageResult): Promise<number> {
-  let updated = 0;
+  const filePaths = Array.from(usage.files.keys());
+  if (filePaths.length === 0) return 0;
 
-  for (const [filePath, fileUsage] of usage.files) {
-    const entities = await storage.findEntities({ filters: { filePath } });
+  // Parallel fetch all entities for all file paths
+  const entitiesByFile = await Promise.all(
+    filePaths.map((filePath) => storage.findEntities({ filters: { filePath } })),
+  );
 
-    for (const entity of entities) {
+  // Collect all updates
+  const updates: Array<{ id: string; changes: Partial<Entity> }> = [];
+  for (let i = 0; i < filePaths.length; i++) {
+    const fileUsage = usage.files.get(filePaths[i]!)!;
+    for (const entity of entitiesByFile[i]!) {
       if (entity.metadata?.["isApiContract"]) {
-        await storage.updateEntity(entity.id, {
-          metadata: {
-            ...entity.metadata,
-            usageConfidence: fileUsage.usageConfidence,
-            isActiveContract: fileUsage.isActiveContract,
+        updates.push({
+          id: entity.id,
+          changes: {
+            metadata: {
+              ...entity.metadata,
+              usageConfidence: fileUsage.usageConfidence,
+              isActiveContract: fileUsage.isActiveContract,
+            },
           },
         });
-        updated++;
       }
     }
   }
 
-  return updated;
+  // Apply all updates in parallel
+  await Promise.all(updates.map(({ id, changes }) => storage.updateEntity(id, changes)));
+
+  return updates.length;
 }
 
 // =============================================================================

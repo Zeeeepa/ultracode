@@ -1,6 +1,6 @@
 # Analysis Module
 
-Multi-signal detection system for active GraphQL, Protobuf, Swagger schema usage and technology stack identification.
+Multi-signal usage detection for API contract files (GraphQL, Protobuf, Swagger) and technology stack discovery.
 
 ## Overview
 

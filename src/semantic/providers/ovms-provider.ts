@@ -147,7 +147,7 @@ export class OVMSProvider implements EmbeddingProvider {
     // OVMS on CPU is slow (~30s per batch for large models like e5-base)
     // Default timeout must be much higher than batch time
     this.timeoutMs = opts.timeoutMs ?? 120_000; // 2 minutes
-    this.concurrency = Math.max(1, opts.concurrency ?? 16); // High concurrency for GPU saturation
+    this.concurrency = Math.max(1, opts.concurrency ?? 8); // Balanced default: avoids 429 while keeping throughput
     this.checkServer = opts.checkServer !== false;
     // Mini-batch size: larger batches = better GPU utilization, less HTTP overhead
     // Default 64 for GPU, 32 for CPU

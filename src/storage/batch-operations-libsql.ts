@@ -266,10 +266,9 @@ export class BatchOperationsLibSQL {
       const batch = ids.slice(i, Math.min(i + this.batchSize, ids.length));
 
       try {
-        for (const id of batch) {
-          await this.adapter.deleteEntity(id);
-          totalProcessed++;
-        }
+        // Use batch delete (single _w() call + chunked IN-clause) instead of per-ID
+        await this.adapter.deleteEntitiesBatch(batch);
+        totalProcessed += batch.length;
 
         if (onProgress) {
           onProgress(totalProcessed, ids.length);

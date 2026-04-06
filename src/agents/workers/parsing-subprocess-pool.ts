@@ -659,8 +659,8 @@ export class ParsingSubprocessPool {
    * When embeddings are enabled, limit workers to avoid overwhelming vLLM/embedding server
    */
   private getOptimalWorkerCount(fileCount: number): number {
-    // When embeddings are enabled, TEI handles up to 16 concurrent requests (concurrency=16)
-    // 10 workers × queueBatchSize=128 stays within TEI capacity; was 8 before +2 bump
+    // When embeddings are enabled, TEI concurrency defaults to 4 to avoid 429 overload
+    // 10 workers × queueBatchSize=128 stays within TEI capacity
     const maxWorkers = this.embeddingConfig ? 10 : 10;
 
     // Scaling thresholds - adjusted for embedding-limited mode

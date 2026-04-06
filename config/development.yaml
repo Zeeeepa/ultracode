@@ -20,12 +20,16 @@ mcp:
       concurrency: 1           # Sequential for CPU stability
       checkServer: true        # Auto-start container if stopped
 
-    # TEI - Alternative GPU provider
+    # TEI - GPU provider (tuned for --max-concurrent-requests 1024 --max-batch-tokens 32768)
     tei:
       baseUrl: "http://127.0.0.1:8282"
       timeoutMs: 120000        # 2 min for massive batches
-      concurrency: 16          # High parallelism
+      concurrency: 16          # TEI server handles 1024 concurrent, safe to push
       checkServer: false
+
+    # Batching: tuned for TEI with --max-batch-tokens 32768
+    queueBatchSize: 256            # Texts per HTTP request (256 × ~50tok = ~12800 tokens < 32768)
+    parallelBatches: 4             # Max concurrent HTTP requests (4 × 256 = 1024 in flight, 0 errors)
 
     useReranker: false
     rerankerModel: "ibm/granite-embedding-reranker:149m"

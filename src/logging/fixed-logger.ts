@@ -4,6 +4,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getBuildHash, getPid } from "./build-info.js";
 import { kvError, kvOpEnd, kvOpStart } from "./kv-serializer.js";
@@ -180,9 +181,28 @@ export class FixedLogger {
   }
 
   /**
-   * Flush buffer to file
+   * Flush buffer to file (async, non-blocking)
    */
   public flush(): void {
+    if (this.buffer.length === 0) return;
+
+    const lines = this.buffer.join("\n");
+    this.buffer = [];
+
+    if (this.config.logDir) {
+      const logFile = this.getLogFilePath();
+      const payload = lines + "\n";
+      this.currentFileSize += payload.length;
+      appendFile(logFile, payload).catch(() => {
+        // Ignore async flush errors
+      });
+    }
+  }
+
+  /**
+   * Flush buffer to file synchronously (for shutdown/exit handlers only)
+   */
+  public flushSync(): void {
     if (this.buffer.length === 0) return;
 
     const lines = this.buffer.join("\n");
@@ -358,10 +378,10 @@ export class FixedLogger {
   }
 
   /**
-   * Close logger (flush and cleanup)
+   * Close logger (sync flush and cleanup)
    */
   public close(): void {
-    this.flush();
+    this.flushSync();
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
@@ -436,6 +456,9 @@ export const log = {
   },
   get flush() {
     return getLogger().flush.bind(getLogger());
+  },
+  get flushSync() {
+    return getLogger().flushSync.bind(getLogger());
   },
   setProject(hash: string) {
     getLogger().setProjectHash(hash);

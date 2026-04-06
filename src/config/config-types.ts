@@ -25,6 +25,10 @@ export interface MCPConfig {
     // Language hint for optimization
     queryLanguage?: "english" | "multilingual" | undefined;
 
+    // Batching: controls request pressure during indexing
+    queueBatchSize?: number | undefined; // Texts per HTTP request (default 256)
+    parallelBatches?: number | undefined; // Max concurrent HTTP requests (default 4)
+
     // Two-phase mode: dump embeddings to disk, then insert to DB
     // Improves stability by separating CPU-intensive embedding from DB writes
     twoPhaseMode?: boolean | undefined;
