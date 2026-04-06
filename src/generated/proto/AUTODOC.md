@@ -75,6 +75,89 @@ The Proto module provides the canonical type registry and loader for UltraCode's
 - `encodePacketHeader` — Serializes an IPacketHeader object to binary protobuf format.
 - `decodePacketHeader` — Deserializes binary protobuf data into an IPacketHeader object.
 
+
+### Added Entities
+
+- **IPosition** — `index.ts:58-62`
+- **ILocation** — `index.ts:64-67`
+- **IParameter** — `index.ts:69-74`
+- **IImportSpecifier** — `index.ts:76-79`
+- **IImportData** — `index.ts:81-86`
+- **IDecorator** — `index.ts:88-92`
+- **IEntityMetadata** — `index.ts:94-103`
+- **IEntity** — `index.ts:105-120`
+- **IRelationshipMetadata** — `index.ts:122-127`
+- **IRelationship** — `index.ts:129-137`
+- **IEntityDelta** — `index.ts:139-143`
+- **IRelationshipDelta** — `index.ts:145-149`
+- **IBranchDelta** — `index.ts:151-158`
+- **IIPCMessage** — `index.ts:160-166`
+- **ISearchResult** — `index.ts:168-171`
+- **IGpuWorkerResponse** — `index.ts:173-181`
+- **IPacketHeader** — `index.ts:183-187`
+- **loadProtoRoot** — `index.ts:22-36`
+- **loadProtoRootSync** — `index.ts:41-55`
+- **getType** — `index.ts:199-202`
+- **getEntityType** — `index.ts:204-207`
+- **getRelationshipType** — `index.ts:209-212`
+- **getBranchDeltaType** — `index.ts:214-217`
+- **getIPCMessageType** — `index.ts:219-222`
+- **getGpuWorkerResponseType** — `index.ts:224-227`
+- **getPacketHeaderType** — `index.ts:229-232`
+- **getEntityBatchType** — `index.ts:234-237`
+- **getRelationshipBatchType** — `index.ts:239-242`
+- **encodeEntity** — `index.ts:249-254`
+- **decodeEntity** — `index.ts:256-259`
+- **encodeEntityBatch** — `index.ts:262-265`
+- **decodeEntityBatch** — `index.ts:267-271`
+- **encodeRelationship** — `index.ts:274-279`
+- **decodeRelationship** — `index.ts:281-284`
+- **encodeRelationshipBatch** — `index.ts:287-290`
+- **decodeRelationshipBatch** — `index.ts:292-296`
+- **encodeBranchDelta** — `index.ts:299-304`
+- **decodeBranchDelta** — `index.ts:306-309`
+- **encodeIPCMessage** — `index.ts:312-315`
+- **decodeIPCMessage** — `index.ts:317-320`
+- **encodeGpuWorkerResponse** — `index.ts:323-326`
+- **decodeGpuWorkerResponse** — `index.ts:328-331`
+- **encodePacketHeader** — `index.ts:334-337`
+- **decodePacketHeader** — `index.ts:339-342`
+- **__filename** — `index.ts:10-10`
+- **__dirname** — `index.ts:11-11`
+- **PROTO_DIR** — `index.ts:14-14`
+- **root** — `index.ts:200-200`
+- **proto** — `index.ts:247-343`
+- **type** — `index.ts:250-250`
+- **errMsg** — `index.ts:251-251`
+- **type** — `index.ts:257-257`
+- **type** — `index.ts:263-263`
+- **type** — `index.ts:268-268`
+- **decoded** — `index.ts:269-269`
+- **type** — `index.ts:275-275`
+- **errMsg** — `index.ts:276-276`
+- **type** — `index.ts:282-282`
+- **type** — `index.ts:288-288`
+- **type** — `index.ts:293-293`
+- **decoded** — `index.ts:294-294`
+- **type** — `index.ts:300-300`
+- **errMsg** — `index.ts:301-301`
+- **type** — `index.ts:307-307`
+- **type** — `index.ts:313-313`
+- **type** — `index.ts:318-318`
+- **type** — `index.ts:324-324`
+- **type** — `index.ts:329-329`
+- **type** — `index.ts:335-335`
+- **type** — `index.ts:340-340`
+- **_root** — `index.ts:17-17`
+- **_Entity** — `index.ts:190-190`
+- **_Relationship** — `index.ts:191-191`
+- **_BranchDelta** — `index.ts:192-192`
+- **_IPCMessage** — `index.ts:193-193`
+- **_GpuWorkerResponse** — `index.ts:194-194`
+- **_PacketHeader** — `index.ts:195-195`
+- **_EntityBatch** — `index.ts:196-196`
+- **_RelationshipBatch** — `index.ts:197-197`
+
 ## Dependencies
 
 **External:**

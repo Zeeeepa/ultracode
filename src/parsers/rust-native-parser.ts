@@ -241,23 +241,34 @@ export class RustNativeParser {
   }
 
   /**
-   * Regex-based parser for Rust
+   * Regex-based parser for Rust — orchestrates rule-based extraction + use statements.
    */
   private parseWithRegex(filePath: string, content: string): RustParseResult {
-    const rules: RegexExtractionRule[] = [
+    const rules = this.buildExtractionRules();
+    const entities = runRegexExtractors(content, filePath, rules);
+    const useEntities = this.extractUseStatements(content, filePath);
+    entities.push(...useEntities);
+    return { entities, errors: [] };
+  }
+
+  /**
+   * Build regex extraction rules for Rust entity types:
+   * modules, structs, enums, traits, impl blocks, functions, constants, type aliases, macros.
+   */
+  private buildExtractionRules(): RegexExtractionRule[] {
+    return [
       // Modules
       {
         regex: /^(?:pub\s+)?mod\s+(\w+)/gm,
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          const isPub = match[0].includes("pub");
           return {
             name,
             type: "module",
             filePath: fp,
             location: getLocation(match.index),
-            modifiers: isPub ? ["pub"] : undefined,
+            modifiers: match[0].includes("pub") ? ["pub"] : undefined,
           };
         },
       },
@@ -268,13 +279,12 @@ export class RustNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          const isPub = match[0].includes("pub");
           return {
             name,
             type: "class",
             filePath: fp,
             location: getLocation(match.index),
-            modifiers: isPub ? ["pub"] : undefined,
+            modifiers: match[0].includes("pub") ? ["pub"] : undefined,
           };
         },
       },
@@ -285,13 +295,12 @@ export class RustNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          const isPub = match[0].includes("pub");
           return {
             name,
             type: "enum",
             filePath: fp,
             location: getLocation(match.index),
-            modifiers: isPub ? ["pub"] : undefined,
+            modifiers: match[0].includes("pub") ? ["pub"] : undefined,
           };
         },
       },
@@ -302,17 +311,15 @@ export class RustNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          const isPub = match[0].includes("pub");
-          const isUnsafe = match[0].includes("unsafe");
           const modifiers: string[] = [];
-          if (isPub) modifiers.push("pub");
-          if (isUnsafe) modifiers.push("unsafe");
+          if (match[0].includes("pub")) modifiers.push("pub");
+          if (match[0].includes("unsafe")) modifiers.push("unsafe");
           return {
             name,
             type: "interface",
             filePath: fp,
             location: getLocation(match.index),
-            ...(modifiers.length > 0 && { modifiers: modifiers }),
+            ...(modifiers.length > 0 && { modifiers }),
           };
         },
       },
@@ -341,9 +348,7 @@ export class RustNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          const paramsStr = match[2] || "";
           const returnType = match[3]?.trim();
-
           const modifiers: string[] = [];
           if (match[0].includes("pub")) modifiers.push("pub");
           if (match[0].includes("async")) modifiers.push("async");
@@ -355,9 +360,9 @@ export class RustNativeParser {
             type: modifiers.includes("async") ? "async_function" : "function",
             filePath: fp,
             location: getLocation(match.index),
-            ...(modifiers.length > 0 && { modifiers: modifiers }),
-            parameters: this.parseParameters(paramsStr),
-            ...(returnType && { returnType: returnType }),
+            ...(modifiers.length > 0 && { modifiers }),
+            parameters: this.parseParameters(match[2] || ""),
+            ...(returnType && { returnType }),
           };
         },
       },
@@ -367,23 +372,19 @@ export class RustNativeParser {
         regex: /^(?:pub(?:\([^)]*\))?\s+)?(?:static\s+(?:mut\s+)?|const\s+)(\w+)\s*:\s*([^=]+)/gm,
         mapper: (match, fp, getLocation) => {
           const name = match[1];
-          const typeName = match[2]?.trim();
           if (!name) return null;
-          const isStatic = match[0].includes("static");
-          const isPub = match[0].includes("pub");
-          const isMut = match[0].includes("mut");
-
+          const typeName = match[2]?.trim();
           const modifiers: string[] = [];
-          if (isPub) modifiers.push("pub");
-          if (isStatic) modifiers.push("static");
-          if (isMut) modifiers.push("mut");
+          if (match[0].includes("pub")) modifiers.push("pub");
+          if (match[0].includes("static")) modifiers.push("static");
+          if (match[0].includes("mut")) modifiers.push("mut");
 
           return {
             name,
             type: "constant",
             filePath: fp,
             location: getLocation(match.index),
-            ...(modifiers.length > 0 && { modifiers: modifiers }),
+            ...(modifiers.length > 0 && { modifiers }),
             metadata: typeName ? { constType: typeName } : undefined,
           };
         },
@@ -395,13 +396,12 @@ export class RustNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          const isPub = match[0].includes("pub");
           return {
             name,
             type: "type",
             filePath: fp,
             location: getLocation(match.index),
-            modifiers: isPub ? ["pub"] : undefined,
+            modifiers: match[0].includes("pub") ? ["pub"] : undefined,
           };
         },
       },
@@ -422,10 +422,13 @@ export class RustNativeParser {
         },
       },
     ];
+  }
 
-    const entities = runRegexExtractors(content, filePath, rules);
-
-    // Use statements (imports) — handled separately because one match can produce multiple entities
+  /**
+   * Extract use statements (imports) — handled separately because one match can produce multiple entities.
+   */
+  private extractUseStatements(content: string, filePath: string): ParsedEntity[] {
+    const entities: ParsedEntity[] = [];
     const useRe = /^(?:pub\s+)?use\s+([\w:]+)(?:::\{([^}]+)\})?(?:\s+as\s+(\w+))?;/gm;
     const lineMap = new LineOffsetMap(content);
     const getLocation = (index: number) => lineMap.getEntityLocation(index);
@@ -438,36 +441,29 @@ export class RustNativeParser {
       if (!path) continue;
 
       if (items) {
-        // use path::{item1, item2}
-        const itemList = items.split(",").map((s) => s.trim());
-        for (const item of itemList) {
+        for (const item of items.split(",").map((s) => s.trim())) {
           if (!item) continue;
           entities.push({
             name: item,
             type: "import",
             filePath,
             location: getLocation(match.index),
-            importData: {
-              source: path,
-              specifiers: [{ local: item }],
-            },
+            importData: { source: path, specifiers: [{ local: item }] },
           });
         }
       } else {
+        const localName = alias || path.split("::").pop() || path;
         entities.push({
-          name: alias || path.split("::").pop() || path,
+          name: localName,
           type: "import",
           filePath,
           location: getLocation(match.index),
-          importData: {
-            source: path,
-            specifiers: [{ local: alias || path.split("::").pop() || path }],
-          },
+          importData: { source: path, specifiers: [{ local: localName }] },
         });
       }
     }
 
-    return { entities, errors: [] };
+    return entities;
   }
 
   /**

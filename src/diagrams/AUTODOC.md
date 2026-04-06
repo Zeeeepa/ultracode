@@ -1,7 +1,5 @@
 # Diagrams
 
-Universal diagram intermediate representation and collection pipeline for flowcharts, class diagrams, and component visualizations.
-
 ## Overview
 
 This module generates architecture diagrams by analyzing the indexed code graph without reading source files. It uses a phased approach: graph traversal with `CONTAINS`-only relationships, relationship lifting (method-level calls elevated to class-level at diagram depth 2), batch enrichment via `TraceEngine`, and optional field-level mapping via regex analysis. All diagrams are built into a universal intermediate representation (`DiagramIR`), then rendered to target format (Mermaid, Graphviz, or D2). The design includes LRU caching (SHA256 keys, 5-minute TTL, 20-entry max) and automatic filtering of non-application code (scripts/, tests/, generated/, docs/).
@@ -46,10 +44,10 @@ Output (diagram source code or rendered visualization)
 | `DiagramEdge` | interface | Edge entity connecting two nodes with relationship type, visual style (solid/dashed/dotted), and optional data-flow annotation. | diagram-ir.ts:47-54 |
 | `DiagramGroup` | interface | Logical grouping container (module, package, namespace) with label, file path, and child node ids for hierarchical diagram organization. | diagram-ir.ts:60-66 |
 | `DiagramIR` | interface | Root intermediate representation structure containing nodes, edges, groups, metadata (title, description, creation timestamp), and diagram statistics (node/edge/group counts, depth). | diagram-ir.ts:70-85 |
-| `DiagramType` | type | Enumerated diagram logical type: `"flowchart"` or `"class"` or `"component"` (independent of output format). | diagram-ir.ts:88 |
-| `DiagramDirection` | type | Layout direction: `"TD"` (top-down) or `"LR"` (left-right). | diagram-ir.ts:89 |
-| `DiagramFormat` | type | Target output format: `"mermaid"` or `"graphviz"` or `"d2"`. | diagram-ir.ts:90 |
-| `EdgeStyle` | type | Visual edge appearance: `"solid"` or `"dashed"` or `"dotted"`. | diagram-ir.ts:91 |
+| `DiagramType` | type | Enumerated diagram logical type: `"flowchart"` or `"class"` or `"component"` (independent of output format). | diagram-ir.ts:88-88 |
+| `DiagramDirection` | type | Layout direction: `"TD"` (top-down) or `"LR"` (left-right). | diagram-ir.ts:89-89 |
+| `DiagramFormat` | type | Target output format: `"mermaid"` or `"graphviz"` or `"d2"`. | diagram-ir.ts:90-90 |
+| `EdgeStyle` | type | Visual edge appearance: `"solid"` or `"dashed"` or `"dotted"`. | diagram-ir.ts:91-91 |
 
 ## Renderers
 

@@ -270,3 +270,81 @@ for (const commit of commits) {
   console.log(`Added: ${branchDiff.added.length}, Removed: ${branchDiff.removed.length}`);
 }
 ```
+
+### Added Entities
+
+- **BatchOperationsLibSQL** — `batch-operations-libsql.ts:28-401`
+- **DbWriteMutex** — `db-write-mutex.ts:14-66`
+- **yieldToEventLoop** — `batch-operations-libsql.ts:22-22`
+- **constructor** — `batch-operations-libsql.ts:38-41`
+- **setProjectContext** — `batch-operations-libsql.ts:43-47`
+- **setProject** — `batch-operations-libsql.ts:49-56`
+- **initialize** — `batch-operations-libsql.ts:58-60`
+- **destroy** — `batch-operations-libsql.ts:62-64`
+- **entityKey** — `batch-operations-libsql.ts:70-75`
+- **stableEntityId** — `batch-operations-libsql.ts:77-83`
+- **relationshipKey** — `batch-operations-libsql.ts:85-87`
+- **stableRelationshipId** — `batch-operations-libsql.ts:89-95`
+- **generateReverseRelationships** — `batch-operations-libsql.ts:102-148`
+- **insertEntities** — `batch-operations-libsql.ts:154-227`
+- **updateEntities** — `batch-operations-libsql.ts:229-249`
+- **deleteEntities** — `batch-operations-libsql.ts:251-293`
+- **insertRelationships** — `batch-operations-libsql.ts:299-382`
+- **optimizeBatchSize** — `batch-operations-libsql.ts:388-396`
+- **getBatchSize** — `batch-operations-libsql.ts:398-400`
+- **constructor** — `db-write-mutex.ts:19-21`
+- **run** — `db-write-mutex.ts:27-45`
+- **drain** — `db-write-mutex.ts:52-55`
+- **queueDepth** — `db-write-mutex.ts:58-60`
+- **label** — `db-write-mutex.ts:63-65`
+- **DEFAULT_BATCH_SIZE** — `batch-operations-libsql.ts:17-17`
+- **MAX_BATCH_SIZE** — `batch-operations-libsql.ts:18-18`
+- **ID_LENGTH** — `batch-operations-libsql.ts:19-19`
+- **resolvedBranch** — `batch-operations-libsql.ts:51-51`
+- **isGlobal** — `batch-operations-libsql.ts:71-71`
+- **key** — `batch-operations-libsql.ts:81-81`
+- **key** — `batch-operations-libsql.ts:93-93`
+- **reverseMap** — `batch-operations-libsql.ts:103-132`
+- **reverse** — `batch-operations-libsql.ts:134-134`
+- **reverseType** — `batch-operations-libsql.ts:136-136`
+- **start** — `batch-operations-libsql.ts:158-158`
+- **errors** — `batch-operations-libsql.ts:159-159`
+- **{ projectHash, branchName }** — `batch-operations-libsql.ts:162-162`
+- **seen** — `batch-operations-libsql.ts:166-166`
+- **uniq** — `batch-operations-libsql.ts:167-167`
+- **key** — `batch-operations-libsql.ts:169-169`
+- **batchCount** — `batch-operations-libsql.ts:177-177`
+- **batch** — `batch-operations-libsql.ts:179-179`
+- **batchNum** — `batch-operations-libsql.ts:180-180`
+- **entitiesWithIds** — `batch-operations-libsql.ts:184-192`
+- **now** — `batch-operations-libsql.ts:185-185`
+- **result** — `batch-operations-libsql.ts:195-195`
+- **entities** — `batch-operations-libsql.ts:234-245`
+- **start** — `batch-operations-libsql.ts:255-255`
+- **errors** — `batch-operations-libsql.ts:256-256`
+- **ids** — `batch-operations-libsql.ts:260-263`
+- **batch** — `batch-operations-libsql.ts:266-266`
+- **start** — `batch-operations-libsql.ts:303-303`
+- **errors** — `batch-operations-libsql.ts:304-304`
+- **{ projectHash, branchName }** — `batch-operations-libsql.ts:307-307`
+- **reverseRels** — `batch-operations-libsql.ts:310-310`
+- **allRelationships** — `batch-operations-libsql.ts:311-311`
+- **seen** — `batch-operations-libsql.ts:321-321`
+- **uniq** — `batch-operations-libsql.ts:322-322`
+- **key** — `batch-operations-libsql.ts:324-324`
+- **batchCount** — `batch-operations-libsql.ts:332-332`
+- **batch** — `batch-operations-libsql.ts:334-334`
+- **batchNum** — `batch-operations-libsql.ts:335-335`
+- **relsWithIds** — `batch-operations-libsql.ts:339-346`
+- **now** — `batch-operations-libsql.ts:340-340`
+- **result** — `batch-operations-libsql.ts:349-349`
+- **nextLink** — `db-write-mutex.ts:30-32`
+- **prevLink** — `db-write-mutex.ts:33-33`
+- **totalProcessed** — `batch-operations-libsql.ts:160-160`
+- **i** — `batch-operations-libsql.ts:178-178`
+- **totalProcessed** — `batch-operations-libsql.ts:257-257`
+- **i** — `batch-operations-libsql.ts:265-265`
+- **totalProcessed** — `batch-operations-libsql.ts:305-305`
+- **i** — `batch-operations-libsql.ts:333-333`
+- **releaseLock** — `db-write-mutex.ts:29-29`
+

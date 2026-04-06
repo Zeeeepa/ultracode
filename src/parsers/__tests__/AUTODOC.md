@@ -1,8 +1,8 @@
-# src/parsers/__tests__
+# HelmParser Test Suite
 
 ## Overview
 
-This module contains the comprehensive test suite for the HelmParser, validating its ability to parse Helm chart files and extract entities, patterns, and metadata. The tests cover Chart.yaml parsing, Helm template pattern detection (nindent, indent, toYaml, include, etc.), incremental parsing behavior, and edge cases in YAML/Helm syntax. Tests use Vitest with mocked file operations and logging to ensure isolated, deterministic validation of parser functionality across realistic Helm chart scenarios.
+This module contains comprehensive tests for the HelmParser, validating its ability to parse Helm chart files and extract entities, patterns, and metadata. The tests cover Chart.yaml parsing, Helm template pattern detection (nindent, indent, toYaml, include, etc.), incremental parsing behavior, and edge cases in YAML/Helm syntax. Tests use Vitest with mocked file operations and logging to ensure isolated, deterministic validation of parser functionality across realistic Helm chart scenarios.
 
 ## Flow
 
@@ -58,16 +58,14 @@ Result: Pass/Fail
 Test fixtures provide repeatable input scenarios for HelmParser validation:
 
 - **Chart.yaml file paths** (`helm-parser.test.ts:30`, `helm-parser.test.ts:106`, `helm-parser.test.ts:742`, `helm-parser.test.ts:813`, `helm-parser.test.ts:867`) — File path inputs for Chart.yaml and Helm template file processing.
-- **YAML content fixtures** — Helm template and Chart.yaml content spanning multiple scenarios:
-  - Basic structures (`helm-parser.test.ts:33-39`, `helm-parser.test.ts:54`, `helm-parser.test.ts:63-74`)
-  - Multi-chart variations (`helm-parser.test.ts:109-131`, `helm-parser.test.ts:133-141`, `helm-parser.test.ts:143-149`, `helm-parser.test.ts:151-159`, `helm-parser.test.ts:161-169`)
-  - Function patterns (`helm-parser.test.ts:178-195`, `helm-parser.test.ts:197-206`, `helm-parser.test.ts:208-225`, `helm-parser.test.ts:227-243`, `helm-parser.test.ts:245-255`)
-  - Advanced functions (`helm-parser.test.ts:264-281`, `helm-parser.test.ts:283-291`, `helm-parser.test.ts:293-310`, `helm-parser.test.ts:312-318`, `helm-parser.test.ts:320-326`)
-  - Directives and references (`helm-parser.test.ts:335-348`, `helm-parser.test.ts:350-358`, `helm-parser.test.ts:360-368`, `helm-parser.test.ts:370-382`, `helm-parser.test.ts:384-390`)
-  - Control flow (`helm-parser.test.ts:399-410`, `helm-parser.test.ts:412-425`, `helm-parser.test.ts:427-443`, `helm-parser.test.ts:445-452`, `helm-parser.test.ts:454-468`, `helm-parser.test.ts:470-476`)
-  - Variable bindings (`helm-parser.test.ts:485-496`, `helm-parser.test.ts:498-513`, `helm-parser.test.ts:515-522`)
-  - String interpolation (`helm-parser.test.ts:531-545`, `helm-parser.test.ts:547-561`, `helm-parser.test.ts:563-575`, `helm-parser.test.ts:577-589`, `helm-parser.test.ts:594`, `helm-parser.test.ts:609-615`)
-
-## Test Design Patterns
-
-The test suite uses **assertion-based validation** to verify parser behavior: each test parses input content and asserts on entity counts, properties (name, version, description), and type categorization. Tests combine **mock-based isolation** (mocked filesystem and logger) with **fixture-driven scenarios** to validate the parser across standard usage patterns, edge cases, and integration points without requiring external resources.
+- **Basic YAML structures** (`helm-parser.test.ts:33-39`, `helm-parser.test.ts:54`, `helm-parser.test.ts:63-74`) — Simple Chart.yaml and template fixtures validating foundational parsing behavior.
+- **Multi-chart variations** (`helm-parser.test.ts:109-131`, `helm-parser.test.ts:133-141`, `helm-parser.test.ts:143-149`, `helm-parser.test.ts:151-159`, `helm-parser.test.ts:161-169`) — Multiple chart configurations testing concurrent parsing and dependency scenarios.
+- **Function pattern fixtures** (`helm-parser.test.ts:178-195`, `helm-parser.test.ts:197-206`, `helm-parser.test.ts:208-225`, `helm-parser.test.ts:227-243`, `helm-parser.test.ts:245-255`) — Helm function call patterns for nindent, indent, quote, and lower functions.
+- **Advanced function fixtures** (`helm-parser.test.ts:264-281`, `helm-parser.test.ts:283-291`, `helm-parser.test.ts:293-310`, `helm-parser.test.ts:312-318`, `helm-parser.test.ts:320-326`) — Nested and complex function calls with toYaml and chained transformations.
+- **Directive fixtures** (`helm-parser.test.ts:335-348`, `helm-parser.test.ts:350-358`, `helm-parser.test.ts:360-368`, `helm-parser.test.ts:370-382`, `helm-parser.test.ts:384-390`) — include, define, and template directive patterns.
+- **Control flow fixtures** (`helm-parser.test.ts:399-410`, `helm-parser.test.ts:412-425`, `helm-parser.test.ts:427-443`, `helm-parser.test.ts:445-462`, `helm-parser.test.ts:464-476`) — range and with directive patterns with variable binding scenarios.
+- **Variable reference fixtures** (`helm-parser.test.ts:485-497`, `helm-parser.test.ts:499-510`, `helm-parser.test.ts:512-522`) — Variable dot-notation and nested access patterns.
+- **String interpolation fixtures** (`helm-parser.test.ts:531-545`, `helm-parser.test.ts:547-560`, `helm-parser.test.ts:562-576`, `helm-parser.test.ts:578-598`, `helm-parser.test.ts:600-614`) — Multi-line template strings with mixed Helm expressions and static content.
+- **Batch and incremental fixtures** (`helm-parser.test.ts:624-647`, `helm-parser.test.ts:666-669`, `helm-parser.test.ts:689-704`) — Sequential file parsing scenarios and delta updates.
+- **Large template fixtures** (`helm-parser.test.ts:714-727`) — Extended Helm templates exceeding 200 lines for performance validation.
+- **Complex structure fixtures** (`helm-parser.test.ts:815-858`, `helm-parser.test.ts:870-939`) — Realistic multi-file chart scenarios with nested templates, includes, and variable scoping.

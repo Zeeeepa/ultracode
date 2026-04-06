@@ -566,9 +566,19 @@ export class CppNativeParser {
   }
 
   /**
-   * Regex-based parser for C/C++
+   * Regex-based parser for C/C++ — orchestrates rule-based extraction.
    */
   private parseWithRegex(filePath: string, content: string, isCpp: boolean): CppParseResult {
+    const rules = this.buildExtractionRules(isCpp);
+    const entities = runRegexExtractors(content, filePath, rules);
+    return { entities, relationships: [], errors: [] };
+  }
+
+  /**
+   * Build regex extraction rules for C/C++ entity types:
+   * includes, classes/structs, enums, functions, typedefs, macros, and C++-only namespaces/using.
+   */
+  private buildExtractionRules(isCpp: boolean): RegexExtractionRule[] {
     const rules: RegexExtractionRule[] = [
       // Includes
       {
@@ -581,10 +591,7 @@ export class CppNativeParser {
             type: "import",
             filePath: fp,
             location: getLocation(match.index),
-            importData: {
-              source: header,
-              specifiers: [{ local: header.replace(/[./]/g, "_") }],
-            },
+            importData: { source: header, specifiers: [{ local: header.replace(/[./]/g, "_") }] },
           };
         },
       },
@@ -596,12 +603,7 @@ export class CppNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          return {
-            name,
-            type: "class",
-            filePath: fp,
-            location: getLocation(match.index),
-          };
+          return { name, type: "class", filePath: fp, location: getLocation(match.index) };
         },
       },
 
@@ -611,28 +613,18 @@ export class CppNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          return {
-            name,
-            type: "enum",
-            filePath: fp,
-            location: getLocation(match.index),
-          };
+          return { name, type: "enum", filePath: fp, location: getLocation(match.index) };
         },
       },
 
-      // Functions (simplified - won't catch all cases)
+      // Functions (simplified)
       {
         regex:
           /^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?(?:const\s+)?(?:\w+(?:\s*[*&]+)?)\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:=\s*0\s*)?.[{;]/gm,
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name || ["if", "while", "for", "switch", "catch"].includes(name)) return null;
-          return {
-            name,
-            type: "function",
-            filePath: fp,
-            location: getLocation(match.index),
-          };
+          return { name, type: "function", filePath: fp, location: getLocation(match.index) };
         },
       },
 
@@ -642,12 +634,7 @@ export class CppNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          return {
-            name,
-            type: "type",
-            filePath: fp,
-            location: getLocation(match.index),
-          };
+          return { name, type: "type", filePath: fp, location: getLocation(match.index) };
         },
       },
 
@@ -657,18 +644,11 @@ export class CppNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          return {
-            name,
-            type: "constant",
-            filePath: fp,
-            location: getLocation(match.index),
-            modifiers: ["macro"],
-          };
+          return { name, type: "constant", filePath: fp, location: getLocation(match.index), modifiers: ["macro"] };
         },
       },
     ];
 
-    // C++-only rules
     if (isCpp) {
       // Namespaces (C++)
       rules.push({
@@ -676,12 +656,7 @@ export class CppNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          return {
-            name,
-            type: "module",
-            filePath: fp,
-            location: getLocation(match.index),
-          };
+          return { name, type: "module", filePath: fp, location: getLocation(match.index) };
         },
       });
 
@@ -691,18 +666,12 @@ export class CppNativeParser {
         mapper: (match, fp, getLocation) => {
           const name = match[1];
           if (!name) return null;
-          return {
-            name,
-            type: "type",
-            filePath: fp,
-            location: getLocation(match.index),
-          };
+          return { name, type: "type", filePath: fp, location: getLocation(match.index) };
         },
       });
     }
 
-    const entities = runRegexExtractors(content, filePath, rules);
-    return { entities, relationships: [], errors: [] };
+    return rules;
   }
 
   /**

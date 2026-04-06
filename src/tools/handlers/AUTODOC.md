@@ -45,6 +45,141 @@ The handlers module contains all tool handler classes that implement the busines
 | `GetHelpToolHandler` | class | Serves documentation from prompts/ directory | [`help-tool-handler.ts`](./help-tool-handler.ts) |
 | `GetToolsForTaskHandler` | class | Recommends tools based on task description | [`get-tools-for-task-handler.ts`](./get-tools-for-task-handler.ts) |
 
+
+### Added Entities
+
+- **AutoDocBatchGenerateHandler** — `autodoc-batch-handler.ts:32-123`
+- **GrepIndexToolHandler** — `zig-compat-tool-handlers.ts:30-112`
+- **BatchModifyToolHandler** — `zig-compat-tool-handlers.ts:118-177`
+- **BatchRenameToolHandler** — `zig-compat-tool-handlers.ts:183-226`
+- **SecurityScanToolHandler** — `zig-compat-tool-handlers.ts:232-281`
+- **GetReviewContextToolHandler** — `zig-compat-tool-handlers.ts:287-335`
+- **DetectArchitectureLayersToolHandler** — `zig-compat-tool-handlers.ts:352-399`
+- **GenerateOnboardingToolHandler** — `zig-compat-tool-handlers.ts:405-453`
+- **SetupEmbeddingToolHandler** — `zig-compat-tool-handlers.ts:459-498`
+- **getChangedDirectories** — `autodoc-batch-handler.ts:133-146`
+- **generateForDirectory** — `autodoc-batch-handler.ts:152-246`
+- **syncAutodocFiles** — `autodoc-batch-handler.ts:251-272`
+- **startEnrichBackground** — `autodoc-batch-handler.ts:277-352`
+- **parseArgs** — `autodoc-batch-handler.ts:33-35`
+- **execute** — `autodoc-batch-handler.ts:37-118`
+- **textResult** — `autodoc-batch-handler.ts:120-122`
+- **parseArgs** — `zig-compat-tool-handlers.ts:31-33`
+- **execute** — `zig-compat-tool-handlers.ts:35-111`
+- **parseArgs** — `zig-compat-tool-handlers.ts:119-121`
+- **execute** — `zig-compat-tool-handlers.ts:123-176`
+- **parseArgs** — `zig-compat-tool-handlers.ts:184-186`
+- **execute** — `zig-compat-tool-handlers.ts:188-225`
+- **parseArgs** — `zig-compat-tool-handlers.ts:233-235`
+- **execute** — `zig-compat-tool-handlers.ts:237-280`
+- **parseArgs** — `zig-compat-tool-handlers.ts:288-290`
+- **execute** — `zig-compat-tool-handlers.ts:292-334`
+- **parseArgs** — `zig-compat-tool-handlers.ts:355-357`
+- **execute** — `zig-compat-tool-handlers.ts:359-398`
+- **parseArgs** — `zig-compat-tool-handlers.ts:406-408`
+- **execute** — `zig-compat-tool-handlers.ts:410-452`
+- **parseArgs** — `zig-compat-tool-handlers.ts:460-462`
+- **execute** — `zig-compat-tool-handlers.ts:464-497`
+- **projectPath** — `autodoc-batch-handler.ts:38-38`
+- **forceRegen** — `autodoc-batch-handler.ts:39-39`
+- **enrich** — `autodoc-batch-handler.ts:40-40`
+- **target** — `autodoc-batch-handler.ts:41-41`
+- **result** — `autodoc-batch-handler.ts:43-43`
+- **enrichFullDirs** — `autodoc-batch-handler.ts:44-44`
+- **enrichIncrDirs** — `autodoc-batch-handler.ts:45-45`
+- **graphStorage** — `autodoc-batch-handler.ts:49-49`
+- **storagePaths** — `autodoc-batch-handler.ts:52-52`
+- **docDbPath** — `autodoc-batch-handler.ts:53-53`
+- **docStorage** — `autodoc-batch-handler.ts:54-54`
+- **dirs** — `autodoc-batch-handler.ts:62-62`
+- **change** — `autodoc-batch-handler.ts:72-72`
+- **entities** — `autodoc-batch-handler.ts:135-135`
+- **dirSet** — `autodoc-batch-handler.ts:136-136`
+- **dir** — `autodoc-batch-handler.ts:140-140`
+- **all** — `autodoc-batch-handler.ts:167-167`
+- **dirNorm** — `autodoc-batch-handler.ts:168-168`
+- **fp** — `autodoc-batch-handler.ts:170-170`
+- **summaryEntities** — `autodoc-batch-handler.ts:181-189`
+- **compositeHash** — `autodoc-batch-handler.ts:192-192`
+- **dirNorm** — `autodoc-batch-handler.ts:195-195`
+- **entityId** — `autodoc-batch-handler.ts:196-196`
+- **curCount** — `autodoc-batch-handler.ts:199-199`
+- **existingMeta** — `autodoc-batch-handler.ts:204-204`
+- **change** — `autodoc-batch-handler.ts:205-205`
+- **templateContent** — `autodoc-batch-handler.ts:213-213`
+- **sourceHash** — `autodoc-batch-handler.ts:214-214`
+- **existingDoc** — `autodoc-batch-handler.ts:222-222`
+- **isEnriched** — `autodoc-batch-handler.ts:224-227`
+- **mergedContent** — `autodoc-batch-handler.ts:230-233`
+- **dirNorm** — `autodoc-batch-handler.ts:255-255`
+- **entityId** — `autodoc-batch-handler.ts:256-256`
+- **doc** — `autodoc-batch-handler.ts:257-257`
+- **absDir** — `autodoc-batch-handler.ts:261-261`
+- **filePath** — `autodoc-batch-handler.ts:262-262`
+- **{ enrichSingleDoc }** — `autodoc-batch-handler.ts:284-284`
+- **{ detectLLMProviders }** — `autodoc-batch-handler.ts:285-285`
+- **{ recommended }** — `autodoc-batch-handler.ts:287-287`
+- **dirNorm** — `autodoc-batch-handler.ts:297-297`
+- **entityId** — `autodoc-batch-handler.ts:298-298`
+- **doc** — `autodoc-batch-handler.ts:299-299`
+- **codeCtx** — `autodoc-batch-handler.ts:302-302`
+- **result** — `autodoc-batch-handler.ts:303-308`
+- **dirNorm** — `autodoc-batch-handler.ts:324-324`
+- **entityId** — `autodoc-batch-handler.ts:325-325`
+- **doc** — `autodoc-batch-handler.ts:326-326`
+- **codeCtx** — `autodoc-batch-handler.ts:329-329`
+- **result** — `autodoc-batch-handler.ts:330-335`
+- **resolvedPath** — `zig-compat-tool-handlers.ts:36-36`
+- **{ TrigramIndex }** — `zig-compat-tool-handlers.ts:40-40`
+- **{ join }** — `zig-compat-tool-handlers.ts:41-41`
+- **indexPath** — `zig-compat-tool-handlers.ts:42-42`
+- **index** — `zig-compat-tool-handlers.ts:43-43`
+- **matches** — `zig-compat-tool-handlers.ts:47-52`
+- **{ execSync }** — `zig-compat-tool-handlers.ts:80-80`
+- **rgArgs** — `zig-compat-tool-handlers.ts:81-81`
+- **output** — `zig-compat-tool-handlers.ts:87-92`
+- **storage** — `zig-compat-tool-handlers.ts:124-124`
+- **isPreview** — `zig-compat-tool-handlers.ts:125-125`
+- **where** — `zig-compat-tool-handlers.ts:128-128`
+- **query** — `zig-compat-tool-handlers.ts:129-129`
+- **entities** — `zig-compat-tool-handlers.ts:135-140`
+- **changes** — `zig-compat-tool-handlers.ts:148-155`
+- **storage** — `zig-compat-tool-handlers.ts:189-189`
+- **isPreview** — `zig-compat-tool-handlers.ts:190-190`
+- **entities** — `zig-compat-tool-handlers.ts:192-197`
+- **renames** — `zig-compat-tool-handlers.ts:199-204`
+- **storage** — `zig-compat-tool-handlers.ts:238-238`
+- **entities** — `zig-compat-tool-handlers.ts:241-241`
+- **sinks** — `zig-compat-tool-handlers.ts:242-242`
+- **meta** — `zig-compat-tool-handlers.ts:245-245`
+- **code** — `zig-compat-tool-handlers.ts:246-246`
+- **storage** — `zig-compat-tool-handlers.ts:293-293`
+- **affectedEntities** — `zig-compat-tool-handlers.ts:295-295`
+- **entities** — `zig-compat-tool-handlers.ts:298-298`
+- **entityNames** — `zig-compat-tool-handlers.ts:299-299`
+- **dependents** — `zig-compat-tool-handlers.ts:302-302`
+- **rels** — `zig-compat-tool-handlers.ts:304-304`
+- **LAYER_PATTERNS** — `zig-compat-tool-handlers.ts:341-350`
+- **storage** — `zig-compat-tool-handlers.ts:360-360`
+- **entities** — `zig-compat-tool-handlers.ts:361-361`
+- **layers** — `zig-compat-tool-handlers.ts:363-363`
+- **path** — `zig-compat-tool-handlers.ts:367-367`
+- **storage** — `zig-compat-tool-handlers.ts:411-411`
+- **maxSteps** — `zig-compat-tool-handlers.ts:412-412`
+- **entities** — `zig-compat-tool-handlers.ts:414-414`
+- **scored** — `zig-compat-tool-handlers.ts:417-421`
+- **steps** — `zig-compat-tool-handlers.ts:423-434`
+- **{ loadModelsCatalog, getModelById }** — `zig-compat-tool-handlers.ts:465-465`
+- **catalog** — `zig-compat-tool-handlers.ts:466-466`
+- **model** — `zig-compat-tool-handlers.ts:467-467`
+- **resolvedTarget** — `autodoc-batch-handler.ts:58-58`
+- **entities** — `autodoc-batch-handler.ts:162-162`
+- **curLoc** — `autodoc-batch-handler.ts:200-200`
+- **synced** — `autodoc-batch-handler.ts:252-252`
+- **total** — `autodoc-batch-handler.ts:293-293`
+- **filtered** — `zig-compat-tool-handlers.ts:143-143`
+- **Args** — `autodoc-batch-handler.ts:30-30`
+
 ## Dependencies
 
 ### Internal Modules

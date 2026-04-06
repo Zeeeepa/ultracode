@@ -37,6 +37,24 @@ The schemas module contains all Zod schema definitions that validate and type-ch
 | `GetDatabaseSchemaSchema` | const | Database schema reconstruction with ORM, migrations, drift detection | [`semantic-schemas.ts:73-78`](./semantic-schemas.ts) |
 | `DEFAULT_EXCLUDE_PATTERNS` | const | Default file exclusion patterns for indexing | [`index-schemas.ts:9-60`](./index-schemas.ts) |
 
+
+### Added Entities
+
+- **GrepIndexSchema** — `missing-tool-schemas.ts:12-20`
+- **BatchModifySchema** — `missing-tool-schemas.ts:26-47`
+- **BatchRenameSchema** — `missing-tool-schemas.ts:53-68`
+- **SecurityScanSchema** — `missing-tool-schemas.ts:74-76`
+- **GetReviewContextSchema** — `missing-tool-schemas.ts:82-86`
+- **DetectArchitectureLayersSchema** — `missing-tool-schemas.ts:92-94`
+- **GenerateOnboardingSchema** — `missing-tool-schemas.ts:100-103`
+- **AutoDocBatchGenerateSchema** — `missing-tool-schemas.ts:109-114`
+- **SetupEmbeddingSchema** — `missing-tool-schemas.ts:120-128`
+- **AnalyzeStacktraceSchema** — `stacktrace-schemas.ts:8-24`
+- **SpawnAgentWorktreeSchema** — `worktree-schemas.ts:7-12`
+- **ListWorktreeAgentsSchema** — `worktree-schemas.ts:14-16`
+- **CleanupWorktreeSchema** — `worktree-schemas.ts:18-21`
+- **GetWorktreeInfoSchema** — `worktree-schemas.ts:23-25`
+
 ## Dependencies
 
 ### Internal Modules

@@ -28,6 +28,21 @@ Forward Claude Code commands → Core server
 
 - **bin/ultracode.js:1-50** — Main CLI entry point script that validates dependencies, resolves paths, sets environment variables, and spawns the Comm binary to route requests from Claude Code to the Core MCP server.
 
+
+### Added Entities
+
+- **tryBunPath** — `ultracode-setup.cjs:34-48`
+- **runSetup** — `ultracode-setup.cjs:50-56`
+- **{ existsSync }** — `ultracode-setup.cjs:10-10`
+- **{ join, dirname }** — `ultracode-setup.cjs:11-11`
+- **{ execSync }** — `ultracode-setup.cjs:12-12`
+- **{ platform }** — `ultracode-setup.cjs:13-13`
+- **relPath** — `ultracode-setup.cjs:16-16`
+- **npmRoot** — `ultracode-setup.cjs:22-22`
+- **npmPath** — `ultracode-setup.cjs:23-23`
+- **home** — `ultracode-setup.cjs:36-36`
+- **bunPath** — `ultracode-setup.cjs:37-39`
+
 ## Dependencies
 
 ### Node.js Built-ins

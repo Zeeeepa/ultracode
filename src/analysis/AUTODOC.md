@@ -101,3 +101,40 @@ Contract usage detectors (`detectSwaggerUsage`, `detectGraphQLUsage`, `detectPro
 ### Heuristic-Based Identification
 
 State pattern detection (`isStateIdentifier`, `isCSharpStateIdentifier`) uses language-specific naming and structural heuristics rather than type analysis, enabling lightweight scanning across polyglot codebases without requiring full semantic parsing.
+
+### Added Entities
+
+- **UsageSignal** — `base-usage-detector.ts:16-21`
+- **FileUsage** — `base-usage-detector.ts:23-28`
+- **UsageResult** — `base-usage-detector.ts:30-34`
+- **UsageDetectorConfig** — `base-usage-detector.ts:40-57`
+- **detectUsage** — `base-usage-detector.ts:70-117`
+- **applyUsageMetadata** — `base-usage-detector.ts:119-140`
+- **analyzeImportsSignal** — `base-usage-detector.ts:146-166`
+- **analyzeCodegenScriptSignal** — `base-usage-detector.ts:168-184`
+- **analyzeCodegenConfigSignal** — `base-usage-detector.ts:186-202`
+- **analyzeGeneratedMarkersSignal** — `base-usage-detector.ts:204-217`
+- **DEFAULT_WEIGHTS** — `base-usage-detector.ts:59-64`
+- **allEntities** — `base-usage-detector.ts:71-71`
+- **allRelationships** — `base-usage-detector.ts:72-72`
+- **weights** — `base-usage-detector.ts:73-73`
+- **threshold** — `base-usage-detector.ts:74-74`
+- **apiEntities** — `base-usage-detector.ts:77-77`
+- **apiFiles** — `base-usage-detector.ts:78-78`
+- **files** — `base-usage-detector.ts:89-89`
+- **signals** — `base-usage-detector.ts:92-97`
+- **usageConfidence** — `base-usage-detector.ts:99-102`
+- **activeFiles** — `base-usage-detector.ts:112-112`
+- **entities** — `base-usage-detector.ts:123-123`
+- **matchingImports** — `base-usage-detector.ts:151-151`
+- **apiRels** — `base-usage-detector.ts:153-155`
+- **hasImports** — `base-usage-detector.ts:157-157`
+- **scriptEntities** — `base-usage-detector.ts:169-169`
+- **matching** — `base-usage-detector.ts:170-173`
+- **cmd** — `base-usage-detector.ts:171-171`
+- **found** — `base-usage-detector.ts:187-191`
+- **name** — `base-usage-detector.ts:188-188`
+- **fp** — `base-usage-detector.ts:189-189`
+- **generated** — `base-usage-detector.ts:209-209`
+- **updated** — `base-usage-detector.ts:120-120`
+

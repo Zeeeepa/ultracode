@@ -78,6 +78,41 @@ Multi-language source code parsing framework supporting 20+ languages. Uses a tw
 | `ComplexityScore` | interface | [`multipass/types.ts:14-31`](./multipass/types.ts) | Complexity metrics (0-100 scale) |
 | `QuickParseResult` | interface | [`multipass/types.ts:36-52`](./multipass/types.ts) | OXC Pass 1 result structure |
 
+
+### Added Entities
+
+- **ASTNode** — `condition-extractor.ts:57-64`
+- **extractEnclosingConditions** — `condition-extractor.ts:77-94`
+- **formatConditionText** — `condition-extractor.ts:100-169`
+- **conditionPrefix** — `condition-extractor.ts:171-176`
+- **detectBranch** — `condition-extractor.ts:179-188`
+- **truncate** — `condition-extractor.ts:190-193`
+- **MAX_WALK_STEPS** — `condition-extractor.ts:15-15`
+- **MAX_CONDITION_LEVELS** — `condition-extractor.ts:16-16`
+- **MAX_CONDITION_LENGTH** — `condition-extractor.ts:17-17`
+- **CONDITION_NODE_TYPES** — `condition-extractor.ts:20-50`
+- **conditions** — `condition-extractor.ts:78-78`
+- **condText** — `condition-extractor.ts:84-84`
+- **nt** — `condition-extractor.ts:101-101`
+- **condExpr** — `condition-extractor.ts:112-112`
+- **prefix** — `condition-extractor.ts:113-113`
+- **branch** — `condition-extractor.ts:114-114`
+- **text** — `condition-extractor.ts:115-115`
+- **condExpr** — `condition-extractor.ts:121-121`
+- **text** — `condition-extractor.ts:122-122`
+- **iterExpr** — `condition-extractor.ts:128-128`
+- **pattern** — `condition-extractor.ts:129-129`
+- **value** — `condition-extractor.ts:138-138`
+- **value** — `condition-extractor.ts:150-150`
+- **cond** — `condition-extractor.ts:156-156`
+- **param** — `condition-extractor.ts:162-162`
+- **line** — `condition-extractor.ts:167-167`
+- **alternative** — `condition-extractor.ts:181-181`
+- **callStart** — `condition-extractor.ts:185-185`
+- **altStart** — `condition-extractor.ts:186-186`
+- **current** — `condition-extractor.ts:79-79`
+- **steps** — `condition-extractor.ts:80-80`
+
 ## Dependencies
 
 ### Internal

@@ -40,6 +40,27 @@ The indexer module provides the data processing layer between parser output and 
 | `scheduleEmbeddingGeneration` | function | Schedules delayed embedding generation | [`git-event-handlers.ts:201-228`](./git-event-handlers.ts) |
 | `triggerEmbeddingGeneration` | function | Triggers immediate embedding generation | [`git-event-handlers.ts:234-256`](./git-event-handlers.ts) |
 
+
+### Added Entities
+
+- **ParentContext** — `sem-id.ts:22-26`
+- **typeAbbrev** — `sem-id.ts:77-79`
+- **fileStem** — `sem-id.ts:86-90`
+- **generateSemId** — `sem-id.ts:108-139`
+- **generateRefId** — `sem-id.ts:145-147`
+- **TYPE_ABBREV** — `sem-id.ts:36-74`
+- **base** — `sem-id.ts:87-87`
+- **ext** — `sem-id.ts:88-88`
+- **mod** — `sem-id.ts:115-115`
+- **abbrev** — `sem-id.ts:116-116`
+- **nameCapped** — `sem-id.ts:117-117`
+- **parentAbbrev** — `sem-id.ts:122-122`
+- **parentName** — `sem-id.ts:123-123`
+- **existing** — `sem-id.ts:130-130`
+- **next** — `sem-id.ts:132-132`
+- **base** — `sem-id.ts:120-120`
+- **OrdinalMap** — `sem-id.ts:29-29`
+
 ## Dependencies
 
 ### Internal Modules

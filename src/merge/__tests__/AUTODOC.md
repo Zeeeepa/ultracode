@@ -91,6 +91,97 @@ Test Execution Flow
 - **Deletion intent classification** `intent-classifier.test.ts:56-69` — Test case validating correct identification of code unit deletions by presence in base absent from changed version.
 - **Replacement intent classification** `intent-classifier.test.ts:71-84` — Test case validating correct identification of complete code unit replacement through structural transformation detection.
 
+
+### Added Entities
+
+- **content** — `diff3.test.ts:6-6`
+- **result** — `diff3.test.ts:7-7`
+- **base** — `diff3.test.ts:15-15`
+- **branchA** — `diff3.test.ts:16-16`
+- **branchB** — `diff3.test.ts:17-17`
+- **result** — `diff3.test.ts:19-19`
+- **base** — `diff3.test.ts:26-26`
+- **branchA** — `diff3.test.ts:27-27`
+- **branchB** — `diff3.test.ts:28-28`
+- **result** — `diff3.test.ts:30-30`
+- **base** — `diff3.test.ts:37-37`
+- **branchA** — `diff3.test.ts:38-38`
+- **branchB** — `diff3.test.ts:39-39`
+- **result** — `diff3.test.ts:41-41`
+- **base** — `diff3.test.ts:48-48`
+- **branchA** — `diff3.test.ts:49-49`
+- **branchB** — `diff3.test.ts:50-50`
+- **result** — `diff3.test.ts:52-52`
+- **base** — `diff3.test.ts:59-59`
+- **branchA** — `diff3.test.ts:60-60`
+- **branchB** — `diff3.test.ts:61-61`
+- **result** — `diff3.test.ts:63-63`
+- **base** — `diff3.test.ts:75-75`
+- **branchA** — `diff3.test.ts:76-76`
+- **branchB** — `diff3.test.ts:77-77`
+- **result** — `diff3.test.ts:79-79`
+- **base** — `diff3.test.ts:86-86`
+- **branchA** — `diff3.test.ts:87-87`
+- **branchB** — `diff3.test.ts:88-88`
+- **result** — `diff3.test.ts:90-90`
+- **base** — `diff3.test.ts:96-96`
+- **branchA** — `diff3.test.ts:97-97`
+- **branchB** — `diff3.test.ts:98-98`
+- **result** — `diff3.test.ts:100-104`
+- **result** — `diff3.test.ts:112-112`
+- **result** — `diff3.test.ts:119-119`
+- **result** — `diff3.test.ts:126-126`
+- **prefix** — `diff3.test.ts:134-134`
+- **suffix** — `diff3.test.ts:135-135`
+- **base** — `diff3.test.ts:136-136`
+- **branchA** — `diff3.test.ts:137-137`
+- **branchB** — `diff3.test.ts:138-138`
+- **result** — `diff3.test.ts:140-140`
+- **base** — `diff3.test.ts:150-150`
+- **branchA** — `diff3.test.ts:151-151`
+- **branchB** — `diff3.test.ts:152-152`
+- **result** — `diff3.test.ts:154-154`
+- **base** — `diff3.test.ts:162-162`
+- **branchA** — `diff3.test.ts:163-163`
+- **branchB** — `diff3.test.ts:164-164`
+- **result** — `diff3.test.ts:166-166`
+- **base** — `diff3.test.ts:173-173`
+- **branchA** — `diff3.test.ts:174-174`
+- **branchB** — `diff3.test.ts:175-175`
+- **result** — `diff3.test.ts:177-177`
+- **types** — `diff3.test.ts:179-179`
+- **base** — `diff3.test.ts:186-186`
+- **branchA** — `diff3.test.ts:187-187`
+- **branchB** — `diff3.test.ts:188-188`
+- **result** — `diff3.test.ts:190-190`
+- **base** — `diff3.test.ts:203-211`
+- **branchA** — `diff3.test.ts:213-222`
+- **branchB** — `diff3.test.ts:224-236`
+- **result** — `diff3.test.ts:238-238`
+- **base** — `diff3.test.ts:246-258`
+- **branchA** — `diff3.test.ts:261-277`
+- **branchB** — `diff3.test.ts:280-296`
+- **result** — `diff3.test.ts:298-298`
+- **base** — `diff3.test.ts:306-311`
+- **branchA** — `diff3.test.ts:314-321`
+- **branchB** — `diff3.test.ts:324-331`
+- **result** — `diff3.test.ts:333-336`
+- **base** — `diff3.test.ts:348-359`
+- **branchA** — `diff3.test.ts:362-374`
+- **branchB** — `diff3.test.ts:377-389`
+- **result** — `diff3.test.ts:391-391`
+- **base** — `diff3.test.ts:399-410`
+- **branchA** — `diff3.test.ts:413-419`
+- **branchB** — `diff3.test.ts:422-437`
+- **result** — `diff3.test.ts:439-439`
+- **base** — `diff3.test.ts:449-456`
+- **branchA** — `diff3.test.ts:459-468`
+- **branchB** — `diff3.test.ts:471-478`
+- **result** — `diff3.test.ts:480-480`
+- **base** — `diff3.test.ts:487-487`
+- **formatted** — `diff3.test.ts:489-489`
+- **result** — `diff3.test.ts:492-492`
+
 ## Dependencies
 
 **Internal Dependencies:**

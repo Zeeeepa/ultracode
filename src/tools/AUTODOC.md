@@ -167,3 +167,57 @@ Transport-level check: enforceResponseLimit (Buffer.byteLength)
 - **Transport safety**: enforceResponseLimit double-checks Buffer.byteLength after handler execution to catch serialization growth.
 - **Pagination**: Standard offset/limit pattern with PaginationMeta (total, offset, limit, truncated flag).
 - **Argument validation**: All handlers use Zod schemas for type-safe, documented parameter parsing.
+
+### Added Entities
+
+- **formatAsText** — `text-formatter.ts:39-58`
+- **formatTextObject** — `text-formatter.ts:63-93`
+- **formatTextTable** — `text-formatter.ts:99-178`
+- **formatAsMarkdown** — `text-formatter.ts:188-226`
+- **formatMarkdownTable** — `text-formatter.ts:231-262`
+- **formatMarkdownObject** — `text-formatter.ts:267-275`
+- **keyToUpper** — `text-formatter.ts:286-288`
+- **valueToStr** — `text-formatter.ts:294-308`
+- **writeColumn** — `text-formatter.ts:315-323`
+- **MAX_WIDTH** — `text-formatter.ts:23-23`
+- **SKIP_KEYS** — `text-formatter.ts:26-26`
+- **MAX_TABLE_ROWS** — `text-formatter.ts:29-29`
+- **obj** — `text-formatter.ts:48-48`
+- **errMsg** — `text-formatter.ts:52-52`
+- **lines** — `text-formatter.ts:64-64`
+- **pad** — `text-formatter.ts:65-65`
+- **upper** — `text-formatter.ts:71-71`
+- **items** — `text-formatter.ts:81-81`
+- **first** — `text-formatter.ts:102-102`
+- **colNames** — `text-formatter.ts:109-109`
+- **rows** — `text-formatter.ts:118-118`
+- **displayItems** — `text-formatter.ts:119-119`
+- **obj** — `text-formatter.ts:122-122`
+- **row** — `text-formatter.ts:123-123`
+- **colWidths** — `text-formatter.ts:128-128`
+- **gap** — `text-formatter.ts:136-136`
+- **total** — `text-formatter.ts:137-137`
+- **excess** — `text-formatter.ts:139-139`
+- **take** — `text-formatter.ts:148-148`
+- **shrink** — `text-formatter.ts:149-149`
+- **lines** — `text-formatter.ts:157-157`
+- **headerCells** — `text-formatter.ts:160-160`
+- **sepWidth** — `text-formatter.ts:164-164`
+- **cells** — `text-formatter.ts:169-169`
+- **obj** — `text-formatter.ts:196-196`
+- **errMsg** — `text-formatter.ts:200-200`
+- **lines** — `text-formatter.ts:204-204`
+- **upper** — `text-formatter.ts:211-211`
+- **upper** — `text-formatter.ts:217-217`
+- **first** — `text-formatter.ts:233-233`
+- **colNames** — `text-formatter.ts:237-237`
+- **lines** — `text-formatter.ts:243-243`
+- **displayItems** — `text-formatter.ts:249-249`
+- **obj** — `text-formatter.ts:252-252`
+- **cells** — `text-formatter.ts:253-253`
+- **lines** — `text-formatter.ts:268-268`
+- **ci** — `text-formatter.ts:130-130`
+- **shrinkable** — `text-formatter.ts:140-140`
+- **remaining** — `text-formatter.ts:145-145`
+- **i** — `text-formatter.ts:146-146`
+

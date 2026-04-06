@@ -2,40 +2,42 @@
 
 ## Overview
 
-The `cuda-custom` module provides a test and validation utility for native CUDA addon support in Node.js and Bun JavaScript runtimes. It detects the active runtime environment, locates the compiled native CUDA addon with fallback resolution logic, and validates GPU device detection capabilities through the native binding. This module serves as a verification point for GPU acceleration functionality within the ultracode ecosystem, with built-in error handling and path hints for addon resolution failures.
+The `cuda-custom` module provides runtime detection and native CUDA addon initialization for Node.js and Bun environments. It resolves the compiled native CUDA addon (`ultracode_cuda.node`) from local or fallback external-libs directories, loads it into the runtime, and validates GPU device detection capabilities through the native binding. This module serves as a bootstrap and verification point for GPU acceleration functionality within the ultracode ecosystem.
 
 ## Flow
 
 ```
-Runtime Detection (Node.js vs Bun)
+Detect Runtime (Node.js vs Bun)
     ↓
-Resolve Addon Path (primary → fallback external-libs)
+Resolve Addon Path (local ./ultracode_cuda.node)
+    ↓
+Check Fallback (../../external-libs/cuda-win32-x64/ultracode_cuda.node)
     ↓
 Load Native Module via require()
     ↓
-Query GPU Device Info (if available)
+Query GPU Device Info (getDeviceInfo if available)
     ↓
 Report Status (SUCCESS or ERROR with diagnostics)
 ```
 
 ## Entity Listing
 
-**Testing & Validation**
+**Bootstrap & Validation**
 
-- `test.js:1-1322` — Entry point that detects the runtime environment (Node.js or Bun), resolves the native CUDA addon from the local directory or fallback external-libs path, loads it via Node.js require(), queries GPU device information if available, and reports success or diagnostic errors with path hints for resolution failures.
+- `test.js:1-1322` — Detects the active JavaScript runtime (Node.js or Bun), resolves and loads the native CUDA addon with fallback path logic, queries GPU device information through the native binding, and reports initialization success or provides diagnostic errors with path hints for resolution failures.
 
 ## Dependencies
 
-**External Native Addon**
+**Native Addon**
 
-- `ultracode_cuda.node` — Compiled native CUDA addon (C++ binding) that provides GPU device information retrieval; resolved from `./ultracode_cuda.node` (primary location) or `../../external-libs/cuda-win32-x64/ultracode_cuda.node` (fallback).
+- `ultracode_cuda.node` — Compiled C++ CUDA binding providing GPU device information retrieval; resolved from `./ultracode_cuda.node` (primary) or fallback location `../../external-libs/cuda-win32-x64/ultracode_cuda.node`.
 
-**Built-in Modules**
+**Node.js Built-in Modules**
 
 - `path` — File path resolution and normalization for cross-platform addon location logic.
-- `fs` — File system checks (`existsSync`) for validating addon presence before loading.
+- `fs` — File system existence checks (`existsSync`) to validate addon presence before loading.
 
-**Runtime Requirements**
+**Runtime Support**
 
-- Node.js v14 or later (primary supported runtime).
-- Bun runtime with known stability issues on certain configurations.
+- Node.js v14+ (primary, stable support).
+- Bun runtime (known stability issues on certain configurations; included for compatibility testing).

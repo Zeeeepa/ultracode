@@ -177,27 +177,66 @@ export class SwiftNativeParser {
   }
 
   /**
-   * Regex-based parser for Swift
+   * Regex-based parser for Swift — orchestrates extraction phases.
    */
   private parseWithRegex(filePath: string, content: string): SwiftParseResult {
+    // Phase 1: Imports
+    const imports = this.extractImports(filePath, content);
+
+    // Phase 2: Type declarations (protocols, classes, structs, enums, actors, extensions)
+    const { entities: typeEntities, currentType } = this.extractTypeDeclarations(filePath, content);
+
+    // Phase 3: Members (functions, inits, properties, type aliases, state props)
+    const { entities: memberEntities, relationships } = this.extractMembers(filePath, content, currentType);
+
+    const entities = [...imports, ...typeEntities, ...memberEntities];
+
+    // Phase 4: Calls and data flow from function bodies (second pass)
+    this.extractCallsAndDataFlow(content, filePath, entities, relationships);
+
+    // Debug: log relationship summary
+    if (relationships.length > 0) {
+      const callsRels = relationships.filter((r) => r.type === "calls");
+      const inheritRels = relationships.filter((r) => r.type === "inherits" || r.type === "implements");
+      const memberRels = relationships.filter((r) => r.type === "member_of");
+      log.i("SWIFT", "parse_relationships", {
+        file: filePath.split(/[/\\]/).pop(),
+        total: relationships.length,
+        calls: callsRels.length,
+        inherit: inheritRels.length,
+        member_of: memberRels.length,
+        callsSample: callsRels.slice(0, 3).map((r) => `${r.from}->${r.to}`),
+      });
+    }
+
+    return { entities, relationships, errors: [] };
+  }
+
+  /**
+   * Parse conformance/inheritance clause into a list of type names.
+   * Shared by protocols, structs, enums, actors, extensions.
+   */
+  private parseConformanceList(clause: string | undefined): string[] {
+    if (!clause) return [];
+    return clause
+      .split(",")
+      .map((p) => p.trim().split("<")[0]?.trim())
+      .filter(Boolean) as string[];
+  }
+
+  /**
+   * Extract import declarations.
+   */
+  private extractImports(filePath: string, content: string): ParsedEntity[] {
     const entities: ParsedEntity[] = [];
-    const relationships: EntityRelationship[] = [];
-    let match: RegExpExecArray | null;
-
-    // Track current context for nested declarations
-    let currentType: string | null = null;
-
-    // =======================================================================
-    // IMPORTS
-    // =======================================================================
     this.resetRegex(IMPORT_RE);
+    let match: RegExpExecArray | null;
     while ((match = IMPORT_RE.exec(content))) {
       const importPath = match[1];
       if (!importPath) continue;
 
-      const importId = `${filePath}:import:${importPath}`;
       entities.push({
-        id: importId,
+        id: `${filePath}:import:${importPath}`,
         name: importPath,
         type: "import",
         filePath,
@@ -209,248 +248,159 @@ export class SwiftNativeParser {
         },
       });
     }
+    return entities;
+  }
 
-    // =======================================================================
-    // PROTOCOLS
-    // =======================================================================
+  /**
+   * Extract type declarations: protocols, classes, structs, enums, actors, extensions.
+   * Returns entities and the last currentType for member qualification.
+   */
+  private extractTypeDeclarations(
+    filePath: string,
+    content: string,
+  ): { entities: ParsedEntity[]; currentType: string | null } {
+    const entities: ParsedEntity[] = [];
+    let currentType: string | null = null;
+    let match: RegExpExecArray | null;
+
+    // Protocols
     this.resetRegex(PROTOCOL_RE);
     while ((match = PROTOCOL_RE.exec(content))) {
       const name = match[1];
       if (!name) continue;
-
-      const protocolId = `${filePath}:protocol:${name}`;
-      const inheritance = match[2]?.trim();
-
-      // Parse parent protocols for inheritance field
-      const parentProtocols = inheritance
-        ? (inheritance
-            .split(",")
-            .map((p) => p.trim().split("<")[0]?.trim())
-            .filter(Boolean) as string[])
-        : [];
-      const inheritanceInfo = parentProtocols.length > 0 ? { baseClasses: [], interfaces: parentProtocols } : undefined;
-
+      const parentProtocols = this.parseConformanceList(match[2]?.trim());
       entities.push({
-        id: protocolId,
+        id: `${filePath}:protocol:${name}`,
         name,
         type: "protocol",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         modifiers: this.extractModifiersFromMatch(match[0]),
-        ...(inheritanceInfo && { inheritance: inheritanceInfo }),
+        ...(parentProtocols.length > 0 && { inheritance: { baseClasses: [], interfaces: parentProtocols } }),
       });
-
-      // Note: protocol inheritance relationships are created by relationship-builder from entity.inheritance
     }
 
-    // =======================================================================
-    // CLASSES
-    // =======================================================================
+    // Classes
     this.resetRegex(CLASS_RE);
     while ((match = CLASS_RE.exec(content))) {
       const name = match[1];
       if (!name) continue;
-
-      const classId = `${filePath}:class:${name}`;
       const inheritanceClause = match[2]?.trim();
-      const modifiers = this.extractModifiersFromMatch(match[0]);
-
-      // Parse inheritance to extract base classes and protocols
-      const inheritanceInfo = inheritanceClause ? this.parseInheritanceInfo(inheritanceClause) : undefined;
-
       entities.push({
-        id: classId,
+        id: `${filePath}:class:${name}`,
         name,
         type: "class",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers,
-        ...(inheritanceInfo && { inheritance: inheritanceInfo }),
+        modifiers: this.extractModifiersFromMatch(match[0]),
+        ...(inheritanceClause && { inheritance: this.parseInheritanceInfo(inheritanceClause) }),
       });
-
-      // Note: inheritance relationships are created by relationship-builder from entity.inheritance
-
       currentType = name;
     }
 
-    // =======================================================================
-    // STRUCTS
-    // =======================================================================
+    // Structs
     this.resetRegex(STRUCT_RE);
     while ((match = STRUCT_RE.exec(content))) {
       const name = match[1];
       if (!name) continue;
-
-      const structId = `${filePath}:struct:${name}`;
-      const conformance = match[2]?.trim();
-      const modifiers = this.extractModifiersFromMatch(match[0]);
-
-      // Parse conformance to extract protocols (structs don't have base classes)
-      const inheritanceInfo = conformance
-        ? {
-            baseClasses: [],
-            interfaces: conformance
-              .split(",")
-              .map((p) => p.trim().split("<")[0]?.trim())
-              .filter(Boolean) as string[],
-          }
-        : undefined;
-
+      const protocols = this.parseConformanceList(match[2]?.trim());
       entities.push({
-        id: structId,
+        id: `${filePath}:struct:${name}`,
         name,
         type: "struct",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers,
+        modifiers: this.extractModifiersFromMatch(match[0]),
         metadata: { isValueType: true },
-        ...(inheritanceInfo &&
-          inheritanceInfo.interfaces &&
-          inheritanceInfo.interfaces.length > 0 && { inheritance: inheritanceInfo }),
+        ...(protocols.length > 0 && { inheritance: { baseClasses: [], interfaces: protocols } }),
       });
-
-      // Note: conformance relationships are created by relationship-builder from entity.inheritance
-
-      currentType = name; // Track current type for member qualification
+      currentType = name;
     }
 
-    // =======================================================================
-    // ENUMS
-    // =======================================================================
+    // Enums
     this.resetRegex(ENUM_RE);
     while ((match = ENUM_RE.exec(content))) {
       const name = match[1];
       if (!name) continue;
-
-      const enumId = `${filePath}:enum:${name}`;
-      const rawTypeOrConformance = match[2]?.trim();
-      const modifiers = this.extractModifiersFromMatch(match[0]);
-
-      // Parse raw type / protocol conformance (enums can have raw type or protocols)
-      const inheritanceInfo = rawTypeOrConformance
-        ? {
-            baseClasses: [],
-            interfaces: rawTypeOrConformance
-              .split(",")
-              .map((p) => p.trim().split("<")[0]?.trim())
-              .filter(Boolean) as string[],
-          }
-        : undefined;
-
+      const protocols = this.parseConformanceList(match[2]?.trim());
       entities.push({
-        id: enumId,
+        id: `${filePath}:enum:${name}`,
         name,
         type: "enum",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers,
+        modifiers: this.extractModifiersFromMatch(match[0]),
         metadata: { isValueType: true },
-        ...(inheritanceInfo &&
-          inheritanceInfo.interfaces &&
-          inheritanceInfo.interfaces.length > 0 && { inheritance: inheritanceInfo }),
+        ...(protocols.length > 0 && { inheritance: { baseClasses: [], interfaces: protocols } }),
       });
-
-      // Note: conformance relationships are created by relationship-builder from entity.inheritance
     }
 
-    // =======================================================================
-    // ACTORS
-    // =======================================================================
+    // Actors
     this.resetRegex(ACTOR_RE);
     while ((match = ACTOR_RE.exec(content))) {
       const name = match[1];
       if (!name) continue;
-
-      const actorId = `${filePath}:actor:${name}`;
-      const conformance = match[2]?.trim();
-      const modifiers = this.extractModifiersFromMatch(match[0]);
-
-      // Parse conformance to extract protocols (actors don't have base classes)
-      const inheritanceInfo = conformance
-        ? {
-            baseClasses: [],
-            interfaces: conformance
-              .split(",")
-              .map((p) => p.trim().split("<")[0]?.trim())
-              .filter(Boolean) as string[],
-          }
-        : undefined;
-
+      const protocols = this.parseConformanceList(match[2]?.trim());
       entities.push({
-        id: actorId,
+        id: `${filePath}:actor:${name}`,
         name,
         type: "actor",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers,
+        modifiers: this.extractModifiersFromMatch(match[0]),
         metadata: { isActor: true, supportsAsync: true },
-        ...(inheritanceInfo &&
-          inheritanceInfo.interfaces &&
-          inheritanceInfo.interfaces.length > 0 && { inheritance: inheritanceInfo }),
+        ...(protocols.length > 0 && { inheritance: { baseClasses: [], interfaces: protocols } }),
       });
-
-      // Note: conformance relationships are created by relationship-builder from entity.inheritance
     }
 
-    // =======================================================================
-    // EXTENSIONS
-    // =======================================================================
+    // Extensions
     this.resetRegex(EXTENSION_RE);
     while ((match = EXTENSION_RE.exec(content))) {
       const extendedType = match[1];
       if (!extendedType) continue;
-
-      const extensionId = `${filePath}:extension:${extendedType}`;
-      const conformance = match[2]?.trim();
-
-      // Parse conformance to extract protocols
-      const protocols = conformance
-        ? (conformance
-            .split(",")
-            .map((p) => p.trim().split("<")[0]?.trim())
-            .filter(Boolean) as string[])
-        : [];
-      // Extensions have the extended type as "base class" and protocols as interfaces
-      const inheritanceInfo = { baseClasses: [extendedType], interfaces: protocols };
-
+      const protocols = this.parseConformanceList(match[2]?.trim());
       entities.push({
-        id: extensionId,
+        id: `${filePath}:extension:${extendedType}`,
         name: extendedType,
         type: "extension",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         modifiers: [],
         metadata: { isExtension: true, extendedType },
-        inheritance: inheritanceInfo,
+        inheritance: { baseClasses: [extendedType], interfaces: protocols },
       });
-
-      // Note: extension relationships are created by relationship-builder from entity.inheritance
     }
 
-    // =======================================================================
-    // FUNCTIONS (Top-level and methods)
-    // =======================================================================
-    // Swift: async/throws come AFTER parameters: func foo() async throws -> T
+    return { entities, currentType };
+  }
+
+  /**
+   * Extract members: functions, initializers, properties, type aliases, state properties.
+   * Uses currentType for qualified names and member_of relationships.
+   */
+  private extractMembers(
+    filePath: string,
+    content: string,
+    currentType: string | null,
+  ): { entities: ParsedEntity[]; relationships: EntityRelationship[] } {
+    const entities: ParsedEntity[] = [];
+    const relationships: EntityRelationship[] = [];
+    let match: RegExpExecArray | null;
+
+    // Functions (top-level and methods)
     this.resetRegex(FUNC_RE);
     while ((match = FUNC_RE.exec(content))) {
       const name = match[1];
       if (!name) continue;
 
       const fullName = currentType ? `${currentType}.${name}` : name;
-      const funcId = `${filePath}:function:${fullName}`;
       const modifiers = this.extractModifiersFromMatch(match[0]);
       const paramsStr = match[2] || "";
-      const hasAsyncKeyword = !!match[3]; // async after params
+      const hasAsyncKeyword = !!match[3];
       const returnType = match[4]?.trim();
-
-      // Check for async both in modifiers and after parameters
       const isAsync = hasAsyncKeyword || modifiers.includes("async");
-      if (hasAsyncKeyword && !modifiers.includes("async")) {
-        modifiers.push("async");
-      }
+      if (hasAsyncKeyword && !modifiers.includes("async")) modifiers.push("async");
       const parameters = this.parseParameters(paramsStr);
-
-      // Determine function type based on context and async modifier
       const funcType: "function" | "method" | "async_function" = isAsync
         ? "async_function"
         : currentType
@@ -458,8 +408,8 @@ export class SwiftNativeParser {
           : "function";
 
       entities.push({
-        id: funcId,
-        name: fullName, // Use qualified name (ClassName.methodName) for cross-module resolution
+        id: `${filePath}:function:${fullName}`,
+        name: fullName,
         type: funcType,
         filePath,
         location: this.getLocationFromIndex(content, match.index),
@@ -468,34 +418,27 @@ export class SwiftNativeParser {
         ...(returnType && { returnType }),
       });
 
-      // Link to parent type using NAMES (not IDs) for indexer resolution
       if (currentType) {
-        const funcLocation = this.getLocationFromIndex(content, match.index);
         relationships.push({
-          from: fullName, // Use qualified name
+          from: fullName,
           to: currentType,
           type: "member_of",
-          metadata: { line: funcLocation.start.line },
+          metadata: { line: this.getLocationFromIndex(content, match.index).start.line },
         });
       }
     }
 
-    // =======================================================================
-    // INITIALIZERS
-    // =======================================================================
+    // Initializers
     this.resetRegex(INIT_RE);
     while ((match = INIT_RE.exec(content))) {
       const fullName = currentType ? `${currentType}.init` : "init";
-      const funcId = `${filePath}:function:${fullName}`;
       const modifiers = this.extractModifiersFromMatch(match[0]);
-      const paramsStr = match[1] || "";
-
-      const parameters = this.parseParameters(paramsStr);
+      const parameters = this.parseParameters(match[1] || "");
       const initLocation = this.getLocationFromIndex(content, match.index);
 
       entities.push({
-        id: funcId,
-        name: fullName, // Use qualified name (ClassName.init) for cross-module resolution
+        id: `${filePath}:function:${fullName}`,
+        name: fullName,
         type: "method",
         filePath,
         location: initLocation,
@@ -506,7 +449,7 @@ export class SwiftNativeParser {
 
       if (currentType) {
         relationships.push({
-          from: fullName, // Use qualified name
+          from: fullName,
           to: currentType,
           type: "member_of",
           metadata: { line: initLocation.start.line },
@@ -514,33 +457,29 @@ export class SwiftNativeParser {
       }
     }
 
-    // =======================================================================
-    // PROPERTIES
-    // =======================================================================
+    // Properties
     this.resetRegex(PROP_RE);
     while ((match = PROP_RE.exec(content))) {
       const name = match[1];
       if (!name) continue;
 
       const fullName = currentType ? `${currentType}.${name}` : name;
-      const propId = `${filePath}:property:${fullName}`;
-      const modifiers = this.extractModifiersFromMatch(match[0]);
       const propType = match[2]?.trim();
       const propLocation = this.getLocationFromIndex(content, match.index);
 
       entities.push({
-        id: propId,
-        name: fullName, // Use qualified name (ClassName.propertyName) for cross-module resolution
+        id: `${filePath}:property:${fullName}`,
+        name: fullName,
         type: "property",
         filePath,
         location: propLocation,
-        modifiers,
+        modifiers: this.extractModifiersFromMatch(match[0]),
         ...(propType && { returnType: propType }),
       });
 
       if (currentType) {
         relationships.push({
-          from: fullName, // Use qualified name
+          from: fullName,
           to: currentType,
           type: "member_of",
           metadata: { line: propLocation.start.line },
@@ -548,9 +487,7 @@ export class SwiftNativeParser {
       }
     }
 
-    // =======================================================================
-    // TYPE ALIASES
-    // =======================================================================
+    // Type aliases
     this.resetRegex(TYPEALIAS_RE);
     while ((match = TYPEALIAS_RE.exec(content))) {
       const name = match[1];
@@ -567,27 +504,24 @@ export class SwiftNativeParser {
       });
     }
 
-    // =======================================================================
-    // STATE PROPERTIES (@State, @Published, @StateObject, etc.)
-    // =======================================================================
+    // State properties (@State, @Published, @StateObject, etc.)
     this.resetRegex(STATE_PROP_RE);
     while ((match = STATE_PROP_RE.exec(content))) {
-      const wrapper = match[1]; // @State, @Published, etc.
+      const wrapper = match[1];
       const name = match[2];
       const propType = match[3]?.trim();
       if (!name) continue;
 
       const fullName = currentType ? `${currentType}.${name}` : name;
-      const stateId = `${filePath}:state:${fullName}`;
       const stateLocation = this.getLocationFromIndex(content, match.index);
 
       entities.push({
-        id: stateId,
-        name: fullName, // Use qualified name (ClassName.propertyName) for cross-module resolution
+        id: `${filePath}:state:${fullName}`,
+        name: fullName,
         type: "property",
         filePath,
         location: stateLocation,
-        modifiers: [wrapper?.slice(1) || "State"], // Remove @
+        modifiers: [wrapper?.slice(1) || "State"],
         returnType: propType,
         metadata: {
           isState: true,
@@ -596,46 +530,23 @@ export class SwiftNativeParser {
         },
       });
 
-      // Link to parent type using NAMES for indexer resolution
       if (currentType) {
         relationships.push({
-          from: fullName, // Use qualified name
+          from: fullName,
           to: currentType,
           type: "member_of",
           metadata: { line: stateLocation.start.line },
         });
-
-        // Create state_dependency relationship for reactive tracking
         relationships.push({
           from: currentType,
-          to: fullName, // Use qualified name
+          to: fullName,
           type: "depends_on",
           metadata: { line: stateLocation.start.line, stateType: wrapper, reactive: true },
         });
       }
     }
 
-    // =======================================================================
-    // EXTRACT CALLS AND DATA FLOW FROM FUNCTION BODIES (Second Pass)
-    // =======================================================================
-    this.extractCallsAndDataFlow(content, filePath, entities, relationships);
-
-    // DEBUG: Log relationships created
-    const callsRels = relationships.filter((r) => r.type === "calls");
-    const inheritRels = relationships.filter((r) => r.type === "inherits" || r.type === "implements");
-    const memberRels = relationships.filter((r) => r.type === "member_of");
-    if (relationships.length > 0) {
-      log.i("SWIFT", "parse_relationships", {
-        file: filePath.split(/[/\\]/).pop(),
-        total: relationships.length,
-        calls: callsRels.length,
-        inherit: inheritRels.length,
-        member_of: memberRels.length,
-        callsSample: callsRels.slice(0, 3).map((r) => `${r.from}->${r.to}`),
-      });
-    }
-
-    return { entities, relationships, errors: [] };
+    return { entities, relationships };
   }
 
   /**

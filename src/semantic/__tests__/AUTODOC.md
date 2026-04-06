@@ -44,6 +44,83 @@ This module contains integration tests for the embedding provider factory and co
 
 - **generator** — `provider-mapping.test.ts:278-278` — Current embedding generator test case being validated from generatorCases dataset.
 
+
+### Added Entities
+
+- **makeVec** — `turbo-quant-plus.test.ts:84-88`
+- **tq** — `turbo-quant-plus.test.ts:50-50`
+- **tq** — `turbo-quant-plus.test.ts:56-56`
+- **tq** — `turbo-quant-plus.test.ts:62-62`
+- **tq** — `turbo-quant-plus.test.ts:68-68`
+- **tq** — `turbo-quant-plus.test.ts:74-74`
+- **v** — `turbo-quant-plus.test.ts:85-85`
+- **tq** — `turbo-quant-plus.test.ts:93-93`
+- **vec** — `turbo-quant-plus.test.ts:94-94`
+- **encoded** — `turbo-quant-plus.test.ts:95-95`
+- **storedNorm** — `turbo-quant-plus.test.ts:98-98`
+- **originalNorm** — `turbo-quant-plus.test.ts:99-99`
+- **tq** — `turbo-quant-plus.test.ts:105-105`
+- **vec** — `turbo-quant-plus.test.ts:106-106`
+- **encoded** — `turbo-quant-plus.test.ts:107-107`
+- **rn** — `turbo-quant-plus.test.ts:108-108`
+- **tq1** — `turbo-quant-plus.test.ts:114-114`
+- **tq2** — `turbo-quant-plus.test.ts:115-115`
+- **vec** — `turbo-quant-plus.test.ts:116-116`
+- **e1** — `turbo-quant-plus.test.ts:117-117`
+- **e2** — `turbo-quant-plus.test.ts:118-118`
+- **vec32** — `turbo-quant-plus.test.ts:128-131`
+- **tq** — `turbo-quant-plus.test.ts:134-134`
+- **encoded** — `turbo-quant-plus.test.ts:135-135`
+- **rotated** — `turbo-quant-plus.test.ts:136-136`
+- **qn** — `turbo-quant-plus.test.ts:137-137`
+- **tq** — `turbo-quant-plus.test.ts:142-142`
+- **encoded** — `turbo-quant-plus.test.ts:143-143`
+- **rotated** — `turbo-quant-plus.test.ts:144-144`
+- **qn** — `turbo-quant-plus.test.ts:145-145`
+- **tq** — `turbo-quant-plus.test.ts:150-150`
+- **encoded** — `turbo-quant-plus.test.ts:151-151`
+- **rotated** — `turbo-quant-plus.test.ts:152-152`
+- **qn** — `turbo-quant-plus.test.ts:153-153`
+- **tq** — `turbo-quant-plus.test.ts:164-164`
+- **a** — `turbo-quant-plus.test.ts:165-165`
+- **b** — `turbo-quant-plus.test.ts:166-166`
+- **encA** — `turbo-quant-plus.test.ts:168-168`
+- **rotB** — `turbo-quant-plus.test.ts:169-169`
+- **baseIP** — `turbo-quant-plus.test.ts:171-171`
+- **jlProj** — `turbo-quant-plus.test.ts:172-172`
+- **correctedIP** — `turbo-quant-plus.test.ts:173-173`
+- **tq** — `turbo-quant-plus.test.ts:182-182`
+- **a** — `turbo-quant-plus.test.ts:183-183`
+- **b** — `turbo-quant-plus.test.ts:184-184`
+- **encA** — `turbo-quant-plus.test.ts:186-186`
+- **rotB** — `turbo-quant-plus.test.ts:187-187`
+- **qn** — `turbo-quant-plus.test.ts:188-188`
+- **jlProj** — `turbo-quant-plus.test.ts:189-189`
+- **cos** — `turbo-quant-plus.test.ts:191-191`
+- **tq** — `turbo-quant-plus.test.ts:203-203`
+- **esize** — `turbo-quant-plus.test.ts:204-204`
+- **vecs** — `turbo-quant-plus.test.ts:206-210`
+- **packed** — `turbo-quant-plus.test.ts:212-212`
+- **enc** — `turbo-quant-plus.test.ts:214-214`
+- **rotated** — `turbo-quant-plus.test.ts:218-218`
+- **qn** — `turbo-quant-plus.test.ts:219-219`
+- **scores** — `turbo-quant-plus.test.ts:220-220`
+- **tq** — `turbo-quant-plus.test.ts:229-229`
+- **esize** — `turbo-quant-plus.test.ts:230-230`
+- **vecs** — `turbo-quant-plus.test.ts:232-232`
+- **packed** — `turbo-quant-plus.test.ts:234-234`
+- **enc** — `turbo-quant-plus.test.ts:236-236`
+- **rotated** — `turbo-quant-plus.test.ts:240-240`
+- **qn** — `turbo-quant-plus.test.ts:241-241`
+- **jlProj** — `turbo-quant-plus.test.ts:242-242`
+- **scores** — `turbo-quant-plus.test.ts:243-243`
+- **tq** — `turbo-quant-plus.test.ts:257-257`
+- **buf** — `turbo-quant-plus.test.ts:258-258`
+- **{ tq: tq2, bytesRead }** — `turbo-quant-plus.test.ts:259-259`
+- **i** — `turbo-quant-plus.test.ts:86-86`
+- **i** — `turbo-quant-plus.test.ts:213-213`
+- **i** — `turbo-quant-plus.test.ts:235-235`
+
 ## Dependencies
 
 - **Imports:**

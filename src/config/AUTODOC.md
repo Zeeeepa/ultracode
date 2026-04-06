@@ -62,6 +62,30 @@ The configuration module manages all application-wide settings for the MCP serve
 | `DEFAULT_CONFIG` | const | Default `AppConfig` values | [`config-defaults.ts:14-186`](./config-defaults.ts) |
 | 30+ interfaces | type | `MCPConfig`, `DatabaseConfig`, `ParserConfig`, etc. | [`config-types.ts`](./config-types.ts) |
 
+
+### Added Entities
+
+- **EmbeddingModel** — `models-catalog.ts:19-34`
+- **ModelsCatalog** — `models-catalog.ts:36-40`
+- **loadModelsCatalog** — `models-catalog.ts:52-87`
+- **parseCatalog** — `models-catalog.ts:89-117`
+- **getActiveModel** — `models-catalog.ts:124-127`
+- **getModelById** — `models-catalog.ts:130-133`
+- **getAvailableModels** — `models-catalog.ts:136-139`
+- **getCdnUrl** — `models-catalog.ts:142-149`
+- **configDir** — `models-catalog.ts:57-57`
+- **jsonPath** — `models-catalog.ts:58-58`
+- **raw** — `models-catalog.ts:59-59`
+- **models** — `models-catalog.ts:90-90`
+- **rawModels** — `models-catalog.ts:91-91`
+- **catalog** — `models-catalog.ts:125-125`
+- **catalog** — `models-catalog.ts:131-131`
+- **catalog** — `models-catalog.ts:137-137`
+- **catalog** — `models-catalog.ts:143-143`
+- **model** — `models-catalog.ts:144-144`
+- **path** — `models-catalog.ts:146-146`
+- **_cached** — `models-catalog.ts:46-46`
+
 ## Dependencies
 
 ### Internal Modules

@@ -29,6 +29,27 @@ The installers module contains dedicated installer implementations for each supp
 | `installVLLM` | function | Creates vLLM container with OpenAI-compatible API | [`vllm-installer.ts:15-198`](./vllm-installer.ts) |
 | `installLlamaCpp` | function | Downloads llama-server binary and GGUF models | [`llamacpp-installer.ts:411-411`](./llamacpp-installer.ts) |
 
+
+### Added Entities
+
+- **curlDownload** — `mlx-installer.ts:29-35`
+- **ensureModel** — `mlx-installer.ts:37-73`
+- **installMLX** — `mlx-installer.ts:75-118`
+- **CDN_BASE** — `mlx-installer.ts:15-15`
+- **MODEL_CDN_MAP** — `mlx-installer.ts:17-27`
+- **r** — `mlx-installer.ts:30-33`
+- **cdnName** — `mlx-installer.ts:38-38`
+- **modelDir** — `mlx-installer.ts:44-44`
+- **safetensors** — `mlx-installer.ts:45-45`
+- **files** — `mlx-installer.ts:54-54`
+- **dest** — `mlx-installer.ts:57-57`
+- **label** — `mlx-installer.ts:60-60`
+- **url** — `mlx-installer.ts:63-63`
+- **dataDir** — `mlx-installer.ts:84-84`
+- **mlxDir** — `mlx-installer.ts:85-85`
+- **modelDir** — `mlx-installer.ts:98-98`
+- **cdnModelId** — `mlx-installer.ts:89-89`
+
 ## Dependencies
 
 ### Internal Modules

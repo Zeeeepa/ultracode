@@ -84,6 +84,34 @@ Handler Response (JSON + pagination metadata + 50KB transport limit)
 | `classifyAsSink` | Classifies an entity as a dangerous operation by matching against `SINK_PATTERNS` and determines which vulnerability categories are affected by the sink. | [catalogs.ts:149-151](catalogs.ts:149-151) |
 | `classifyAsSanitizer` | Classifies an entity as a protective sanitizer by matching against `SANITIZER_PATTERNS` and identifies which vulnerability categories are defended by the sanitizer. | [catalogs.ts:163-165](catalogs.ts:163-165) |
 
+
+### Added Entities
+
+- **FlowMapping** — `flow-semantics.ts:19-24`
+- **FlowSemantic** — `flow-semantics.ts:26-32`
+- **lookupSemantic** — `flow-semantics.ts:186-198`
+- **propagateTaint** — `flow-semantics.ts:212-237`
+- **PASSTHROUGH** — `flow-semantics.ts:38-38`
+- **CONCAT** — `flow-semantics.ts:39-42`
+- **SOURCE_RET** — `flow-semantics.ts:43-43`
+- **SINK_0** — `flow-semantics.ts:44-44`
+- **SINK_01** — `flow-semantics.ts:45-48`
+- **SANITIZER** — `flow-semantics.ts:49-49`
+- **STRCPY** — `flow-semantics.ts:50-53`
+- **STRCAT** — `flow-semantics.ts:54-54`
+- **SPRINTF** — `flow-semantics.ts:55-58`
+- **MEMCPY** — `flow-semantics.ts:59-59`
+- **STRDUP** — `flow-semantics.ts:60-60`
+- **FLOW_CATALOG** — `flow-semantics.ts:66-171`
+- **_semanticMap** — `flow-semantics.ts:177-177`
+- **exact** — `flow-semantics.ts:187-187`
+- **dotIdx** — `flow-semantics.ts:191-191`
+- **suffix** — `flow-semantics.ts:193-193`
+- **MAX_ARGS** — `flow-semantics.ts:204-204`
+- **RETURN_IDX** — `flow-semantics.ts:205-205`
+- **result** — `flow-semantics.ts:213-213`
+- **srcTainted** — `flow-semantics.ts:220-220`
+
 ## Dependencies
 
 **Internal:**

@@ -69,6 +69,37 @@ Receive/Process/Send Response
 - **define** — `comm.c:52-53` — Preprocessor constant for success status code.
 - **define** — `comm.c:53-54` — Preprocessor constant for failure status code.
 
+
+### Added Entities
+
+- **pollfd** — `comm-native.c:422-422`
+- **win_signal_handler** — `comm-native.c:67-71`
+- **signal_handler** — `comm-native.c:73-76`
+- **print_help** — `comm-native.c:79-92`
+- **json_escape** — `comm-native.c:98-108`
+- **build_init_message** — `comm-native.c:110-128`
+- **parse_args** — `comm-native.c:130-148`
+- **get_cwd** — `comm-native.c:150-161`
+- **get_exe_dir** — `comm-native.c:164-183`
+- **find_runtime** — `comm-native.c:191-208`
+- **win_stdio_main** — `comm-native.c:210-314`
+- **unix_find_runtime** — `comm-native.c:326-354`
+- **unix_stdio_main** — `comm-native.c:356-449`
+- **main** — `comm-native.c:457-478`
+- **WIN32_LEAN_AND_MEAN** — `comm-native.c:19-20`
+- **access** — `comm-native.c:23-24`
+- **F_OK** — `comm-native.c:25-26`
+- **R_OK** — `comm-native.c:28-29`
+- **snprintf** — `comm-native.c:32-33`
+- **VERSION** — `comm-native.c:45-46`
+- **APP_NAME** — `comm-native.c:46-47`
+- **BUFFER_SIZE** — `comm-native.c:47-48`
+- **PIPE_NAME** — `comm-native.c:48-49`
+- **INIT_PREFIX** — `comm-native.c:49-50`
+- **g_running** — `comm-native.c:64-64`
+- **TransportMode** — `comm-native.c:51-54`
+- **CommArgs** — `comm-native.c:56-62`
+
 ## Dependencies
 
 **Internal:** No interdependencies with other src/comm modules (single-file module).

@@ -89,25 +89,16 @@ export class PathBuilder {
 
     // BFS to collect all relevant nodes
     const visited = new Set<string>();
-    const queue: Array<{ id: string; depth: number }> = startIds.map((id) => ({
-      id,
-      depth: 0,
-    }));
+    const queue: Array<{ id: string; depth: number }> = startIds.map((id) => ({ id, depth: 0 }));
 
     while (queue.length > 0) {
-      // Process in batches of 16 for better cache locality
       const batch = queue.splice(0, Math.min(16, queue.length));
-
-      // Filter to unvisited nodes within depth
       const validBatch = batch.filter(({ id, depth }) => !visited.has(id) && depth <= maxDepth);
       if (validBatch.length === 0) continue;
 
-      // Mark all as visited upfront to avoid re-queuing
       for (const { id } of validBatch) visited.add(id);
 
-      // Batch fetch all entities in one query instead of N getEntity() calls
-      const batchIds = validBatch.map(({ id }) => id);
-      const entityMap = await this.storage.getEntitiesBatch(batchIds);
+      const entityMap = await this.storage.getEntitiesBatch(validBatch.map(({ id }) => id));
 
       for (const { id, depth } of validBatch) {
         const entity = entityMap.get(id);
@@ -116,71 +107,15 @@ export class PathBuilder {
         const node = this.entityToNode(entity);
         nodes.set(id, node);
 
-        // Get outgoing relationships (calls) — still per-entity (no batch API for relationships)
-        const outRels = await this.storage.getRelationshipsForEntity(id);
-        const outgoing: string[] = [];
-        const incoming: string[] = [];
-
-        for (const rel of outRels) {
-          const weight = this.calculateEdgeWeight(rel, entity);
-          const edgeKey = `${rel.fromId}:${rel.toId}`;
-          weights.set(edgeKey, weight);
-
-          if (rel.fromId === id) {
-            // Outgoing edge - resolve NgRx phantom entities by name
-            let targetId = rel.toId;
-
-            if (NGRX_RELATIONSHIP_TYPES.has(rel.type)) {
-              // For NgRx relationships, try to resolve target by name
-              const resolvedId = await resolveNgRxTarget(this.storage, rel.toId);
-              if (resolvedId) {
-                targetId = resolvedId;
-              }
-            }
-
-            outgoing.push(targetId);
-            if (depth < maxDepth && !visited.has(targetId)) {
-              queue.push({ id: targetId, depth: depth + 1 });
-            }
-          } else {
-            // Incoming edge
-            incoming.push(rel.fromId);
-            if (depth < maxDepth && !visited.has(rel.fromId)) {
-              queue.push({ id: rel.fromId, depth: depth + 1 });
-            }
-          }
-        }
-
-        // Also find incoming NgRx relationships by entity name
-        const incomingNgRx = await findIncomingNgRxRelationships(this.storage, entity.name);
-        for (const rel of incomingNgRx) {
-          const isInvertedRelation = isInvertedNgRxRelation(rel.type);
-
-          if (isInvertedRelation) {
-            // Inverted: action -> reducer/effect (add as outgoing from current entity)
-            if (!outgoing.includes(rel.fromId)) {
-              outgoing.push(rel.fromId);
-              const weight = this.calculateEdgeWeight(rel, entity);
-              weights.set(`${id}:${rel.fromId}`, weight);
-
-              if (depth < maxDepth && !visited.has(rel.fromId)) {
-                queue.push({ id: rel.fromId, depth: depth + 1 });
-              }
-            }
-          } else {
-            // Normal incoming
-            if (!incoming.includes(rel.fromId)) {
-              incoming.push(rel.fromId);
-              const weight = this.calculateEdgeWeight(rel, entity);
-              weights.set(`${rel.fromId}:${id}`, weight);
-
-              if (depth < maxDepth && !visited.has(rel.fromId)) {
-                queue.push({ id: rel.fromId, depth: depth + 1 });
-              }
-            }
-          }
-        }
-
+        const { outgoing, incoming } = await this.processEntityEdges(
+          id,
+          depth,
+          maxDepth,
+          entity,
+          weights,
+          visited,
+          queue,
+        );
         forward.set(id, outgoing);
         backward.set(id, incoming);
         node.outgoing = outgoing;
@@ -188,79 +123,134 @@ export class PathBuilder {
       }
     }
 
-    // Add implicit NgRx reducer -> featureSelector connections
-    const reducerSelectorConnections = await findReducerToSelectorConnections(this.storage);
-
-    // Batch fetch all missing entities at once instead of N getEntity() calls
-    const missingConnIds = new Set<string>();
-    for (const conn of reducerSelectorConnections) {
-      if (nodes.has(conn.reducerId) || nodes.has(conn.selectorId)) {
-        if (!nodes.has(conn.reducerId)) missingConnIds.add(conn.reducerId);
-        if (!nodes.has(conn.selectorId)) missingConnIds.add(conn.selectorId);
-      }
-    }
-    const missingEntities =
-      missingConnIds.size > 0 ? await this.storage.getEntitiesBatch([...missingConnIds]) : new Map<string, Entity>();
-
-    for (const conn of reducerSelectorConnections) {
-      // Only add if both nodes are in the graph
-      if (nodes.has(conn.reducerId) || nodes.has(conn.selectorId)) {
-        // Ensure both nodes exist in graph (use batch-fetched entities)
-        if (!nodes.has(conn.reducerId)) {
-          const reducerEntity = missingEntities.get(conn.reducerId);
-          if (reducerEntity) {
-            nodes.set(conn.reducerId, this.entityToNode(reducerEntity));
-            forward.set(conn.reducerId, []);
-            backward.set(conn.reducerId, []);
-          }
-        }
-        if (!nodes.has(conn.selectorId)) {
-          const selectorEntity = missingEntities.get(conn.selectorId);
-          if (selectorEntity) {
-            nodes.set(conn.selectorId, this.entityToNode(selectorEntity));
-            forward.set(conn.selectorId, []);
-            backward.set(conn.selectorId, []);
-          }
-        }
-
-        // Add forward edge: reducer -> featureSelector
-        const reducerOutgoing = forward.get(conn.reducerId) || [];
-        if (!reducerOutgoing.includes(conn.selectorId)) {
-          reducerOutgoing.push(conn.selectorId);
-          forward.set(conn.reducerId, reducerOutgoing);
-        }
-
-        // Add backward edge: featureSelector <- reducer
-        const selectorIncoming = backward.get(conn.selectorId) || [];
-        if (!selectorIncoming.includes(conn.reducerId)) {
-          selectorIncoming.push(conn.reducerId);
-          backward.set(conn.selectorId, selectorIncoming);
-        }
-
-        // Add weight based on confidence
-        const edgeKey = `${conn.reducerId}:${conn.selectorId}`;
-        weights.set(edgeKey, CALL_WEIGHT * (2 - conn.confidence)); // Higher confidence = lower weight
-
-        // Update node edges
-        const reducerNode = nodes.get(conn.reducerId);
-        const selectorNode = nodes.get(conn.selectorId);
-        if (reducerNode && !reducerNode.outgoing.includes(conn.selectorId)) {
-          reducerNode.outgoing.push(conn.selectorId);
-        }
-        if (selectorNode && !selectorNode.incoming.includes(conn.reducerId)) {
-          selectorNode.incoming.push(conn.reducerId);
-        }
-      }
-    }
+    // Post-processing: add implicit NgRx reducer -> featureSelector connections
+    await this.addReducerSelectorEdges(nodes, forward, backward, weights);
 
     const graph: AdjacencyGraph = { nodes, forward, backward, weights };
-
-    // Cache for reuse
     if (nodes.size < 10000) {
       this.adjacencyCache.set(cacheKey, graph);
     }
-
     return graph;
+  }
+
+  /**
+   * Process all edges for a single entity during BFS: direct relationships + NgRx incoming.
+   */
+  private async processEntityEdges(
+    id: string,
+    depth: number,
+    maxDepth: number,
+    entity: Entity,
+    weights: Map<string, number>,
+    visited: Set<string>,
+    queue: Array<{ id: string; depth: number }>,
+  ): Promise<{ outgoing: string[]; incoming: string[] }> {
+    const outgoing: string[] = [];
+    const incoming: string[] = [];
+
+    // Direct relationships
+    const outRels = await this.storage.getRelationshipsForEntity(id);
+    for (const rel of outRels) {
+      weights.set(`${rel.fromId}:${rel.toId}`, this.calculateEdgeWeight(rel, entity));
+
+      if (rel.fromId === id) {
+        let targetId = rel.toId;
+        if (NGRX_RELATIONSHIP_TYPES.has(rel.type)) {
+          targetId = (await resolveNgRxTarget(this.storage, rel.toId)) || targetId;
+        }
+        outgoing.push(targetId);
+        if (depth < maxDepth && !visited.has(targetId)) {
+          queue.push({ id: targetId, depth: depth + 1 });
+        }
+      } else {
+        incoming.push(rel.fromId);
+        if (depth < maxDepth && !visited.has(rel.fromId)) {
+          queue.push({ id: rel.fromId, depth: depth + 1 });
+        }
+      }
+    }
+
+    // Incoming NgRx relationships by entity name
+    const incomingNgRx = await findIncomingNgRxRelationships(this.storage, entity.name);
+    for (const rel of incomingNgRx) {
+      const isInverted = isInvertedNgRxRelation(rel.type);
+      const targetArray = isInverted ? outgoing : incoming;
+      const edgeKey = isInverted ? `${id}:${rel.fromId}` : `${rel.fromId}:${id}`;
+
+      if (!targetArray.includes(rel.fromId)) {
+        targetArray.push(rel.fromId);
+        weights.set(edgeKey, this.calculateEdgeWeight(rel, entity));
+        if (depth < maxDepth && !visited.has(rel.fromId)) {
+          queue.push({ id: rel.fromId, depth: depth + 1 });
+        }
+      }
+    }
+
+    return { outgoing, incoming };
+  }
+
+  /**
+   * Add implicit NgRx reducer -> featureSelector connections as post-processing step.
+   */
+  private async addReducerSelectorEdges(
+    nodes: Map<string, GraphNode>,
+    forward: Map<string, string[]>,
+    backward: Map<string, string[]>,
+    weights: Map<string, number>,
+  ): Promise<void> {
+    const connections = await findReducerToSelectorConnections(this.storage);
+
+    // Batch fetch missing entities
+    const missingIds = new Set<string>();
+    for (const conn of connections) {
+      if (nodes.has(conn.reducerId) || nodes.has(conn.selectorId)) {
+        if (!nodes.has(conn.reducerId)) missingIds.add(conn.reducerId);
+        if (!nodes.has(conn.selectorId)) missingIds.add(conn.selectorId);
+      }
+    }
+    const missingEntities =
+      missingIds.size > 0 ? await this.storage.getEntitiesBatch([...missingIds]) : new Map<string, Entity>();
+
+    for (const conn of connections) {
+      if (!nodes.has(conn.reducerId) && !nodes.has(conn.selectorId)) continue;
+
+      // Ensure both nodes exist
+      for (const [connId, entityMap] of [
+        [conn.reducerId, missingEntities],
+        [conn.selectorId, missingEntities],
+      ] as const) {
+        if (!nodes.has(connId)) {
+          const entity = entityMap.get(connId);
+          if (entity) {
+            nodes.set(connId, this.entityToNode(entity));
+            forward.set(connId, []);
+            backward.set(connId, []);
+          }
+        }
+      }
+
+      // Add forward edge: reducer -> featureSelector
+      const reducerOutgoing = forward.get(conn.reducerId) || [];
+      if (!reducerOutgoing.includes(conn.selectorId)) {
+        reducerOutgoing.push(conn.selectorId);
+        forward.set(conn.reducerId, reducerOutgoing);
+      }
+
+      // Add backward edge: featureSelector <- reducer
+      const selectorIncoming = backward.get(conn.selectorId) || [];
+      if (!selectorIncoming.includes(conn.reducerId)) {
+        selectorIncoming.push(conn.reducerId);
+        backward.set(conn.selectorId, selectorIncoming);
+      }
+
+      weights.set(`${conn.reducerId}:${conn.selectorId}`, CALL_WEIGHT * (2 - conn.confidence));
+
+      // Update node edges
+      const reducerNode = nodes.get(conn.reducerId);
+      const selectorNode = nodes.get(conn.selectorId);
+      if (reducerNode && !reducerNode.outgoing.includes(conn.selectorId)) reducerNode.outgoing.push(conn.selectorId);
+      if (selectorNode && !selectorNode.incoming.includes(conn.reducerId)) selectorNode.incoming.push(conn.reducerId);
+    }
   }
 
   /**
