@@ -12,7 +12,7 @@ import { log } from "../../logging/index.js";
 import type { BatchResult, Entity, EntityType } from "../../types/storage.js";
 import { encodeMetadata } from "./cbor-utils.js";
 import type { GenerationManager } from "./generation-ops.js";
-import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
+import type { ClientGetter, ContextGetter, DbMutexFn, WriteMutexFn } from "./types.js";
 
 // =============================================================================
 // COMPACT LOCATION SERIALIZATION
@@ -114,6 +114,7 @@ export class EntityOperations {
     private genManager: GenerationManager,
     private getStagingMode: () => boolean = () => false,
     private writeMutex?: WriteMutexFn,
+    private dbMutex?: DbMutexFn,
   ) {}
 
   /**
@@ -128,6 +129,12 @@ export class EntityOperations {
   /** Route write through per-DB mutex if available, otherwise direct call */
   private _w<T>(fn: () => Promise<T>): Promise<T> {
     return this.writeMutex ? this.writeMutex(fn) : fn();
+  }
+
+  /** Route read through per-DB mutex if available, otherwise direct call.
+   *  Serialized with writes — prevents concurrent stmt.iterate() crashes. */
+  private _r<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.dbMutex ? this.dbMutex(fn) : Promise.resolve(fn());
   }
 
   /**
@@ -369,13 +376,8 @@ export class EntityOperations {
    * Get entity by ID (layered: delta → base with tombstone check)
    */
   async getEntity(id: string): Promise<Entity | null> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName, baseBranch } = this.getContext();
-    log.w("ENTITY_OPS", "getEntity", { branch: branchName, base: baseBranch || "none" });
-
-    // 1. Check tombstone first (if on feature branch)
+    const { baseBranch } = this.getContext();
+    // Tombstones come from versioning.db (separate mutex) — fetch before graph lock
     if (baseBranch && this.tombstoneGetter) {
       const tombstones = await this.tombstoneGetter("entity");
       if (tombstones.has(id)) {
@@ -383,37 +385,45 @@ export class EntityOperations {
       }
     }
 
-    // 2. Try to find in current branch (delta) — only active generation
-    const result = await client.execute({
-      sql: `SELECT e.* FROM entities e
-            JOIN file_generations fg
-              ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-            WHERE e.id = ? AND e.project_hash = ? AND e.branch_name = ?
-              AND e.file_gen = fg.active_gen`,
-      args: [id, projectHash, branchName],
-    });
+    return this._r(async () => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    if (result.rows.length > 0) {
-      return this.rowToEntity(result.rows[0]);
-    }
+      const { projectHash, branchName, baseBranch: base } = this.getContext();
+      log.w("ENTITY_OPS", "getEntity", { branch: branchName, base: base || "none" });
 
-    // 3. If on feature branch and not found in delta, check base
-    if (baseBranch) {
-      const baseResult = await client.execute({
+      // Try to find in current branch (delta) — only active generation
+      const result = await client.execute({
         sql: `SELECT e.* FROM entities e
               JOIN file_generations fg
                 ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
               WHERE e.id = ? AND e.project_hash = ? AND e.branch_name = ?
                 AND e.file_gen = fg.active_gen`,
-        args: [id, projectHash, baseBranch],
+        args: [id, projectHash, branchName],
       });
 
-      if (baseResult.rows.length > 0) {
-        return this.rowToEntity(baseResult.rows[0]);
+      if (result.rows.length > 0) {
+        return this.rowToEntity(result.rows[0]);
       }
-    }
 
-    return null;
+      // If on feature branch and not found in delta, check base
+      if (base) {
+        const baseResult = await client.execute({
+          sql: `SELECT e.* FROM entities e
+                JOIN file_generations fg
+                  ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+                WHERE e.id = ? AND e.project_hash = ? AND e.branch_name = ?
+                  AND e.file_gen = fg.active_gen`,
+          args: [id, projectHash, base],
+        });
+
+        if (baseResult.rows.length > 0) {
+          return this.rowToEntity(baseResult.rows[0]);
+        }
+      }
+
+      return null;
+    });
   }
 
   /**
@@ -611,124 +621,129 @@ export class EntityOperations {
     offset?: number | undefined;
     lightweight?: boolean | undefined;
   }): Promise<Entity[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+    const { baseBranch } = this.getContext();
+    // Tombstones come from versioning.db (separate mutex) — fetch before graph lock
+    const tombstones = baseBranch && this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
-    log.w("ENTITY_OPS", "findEntities", {
-      hash: projectHash,
-      branch: branchName,
-      base: baseBranch || "none",
-      lightweight: !!query.lightweight,
-    });
-    const limit = query.limit || 100;
-    const offset = query.offset || 0;
+    return this._r(() => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    // Lightweight mode: select only essential columns
-    const selectCols = query.lightweight
-      ? `e.id, e.name, e.type, e.file_path, e.location, e.language, e.metadata, e.hash,
-         e.complexity, e.size, e.file_gen, e.project_hash, e.branch_name,
-         e.created_at, e.updated_at`
-      : "e.*";
+      const { projectHash, branchName, baseBranch: base } = this.getContext();
+      log.w("ENTITY_OPS", "findEntities", {
+        hash: projectHash,
+        branch: branchName,
+        base: base || "none",
+        lightweight: !!query.lightweight,
+      });
+      const limit = query.limit || 100;
+      const offset = query.offset || 0;
 
-    // Simple case: no base branch
-    // Chunked reads: bun:sqlite stmt.all() with large result sets triggers JSC GC
-    // segfault. Reading in 5000-row chunks via executeIterator keeps memory pressure low.
-    if (!baseBranch) {
-      const baseArgs: (string | number)[] = [projectHash, branchName];
-      let baseSql = `SELECT ${selectCols} FROM entities e
-                 JOIN file_generations fg
-                   ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-                 WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
-      baseSql += this.buildFilterClause(query.filters, baseArgs, { projectHash, branchName });
+      // Lightweight mode: select only essential columns
+      const selectCols = query.lightweight
+        ? `e.id, e.name, e.type, e.file_path, e.location, e.language, e.metadata, e.hash,
+           e.complexity, e.size, e.file_gen, e.project_hash, e.branch_name,
+           e.created_at, e.updated_at`
+        : "e.*";
 
-      const CHUNK_SIZE = 5000;
-      if (limit <= CHUNK_SIZE) {
-        const args = [...baseArgs, limit, offset];
+      // Simple case: no base branch
+      // Chunked reads: bun:sqlite stmt.all() with large result sets triggers JSC GC
+      // segfault. Reading in 5000-row chunks via executeIterator keeps memory pressure low.
+      if (!base) {
+        const baseArgs: (string | number)[] = [projectHash, branchName];
+        let baseSql = `SELECT ${selectCols} FROM entities e
+                   JOIN file_generations fg
+                     ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+                   WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+        baseSql += this.buildFilterClause(query.filters, baseArgs, { projectHash, branchName });
+
+        const CHUNK_SIZE = 5000;
+        if (limit <= CHUNK_SIZE) {
+          const args = [...baseArgs, limit, offset];
+          const entities: Entity[] = [];
+          for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args })) {
+            entities.push(this.rowToEntity(row));
+          }
+          return entities;
+        }
+
         const entities: Entity[] = [];
-        for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args })) {
-          entities.push(this.rowToEntity(row));
+        let chunkOffset = offset;
+        while (entities.length < limit) {
+          const chunkLimit = Math.min(CHUNK_SIZE, limit - entities.length);
+          const chunkArgs = [...baseArgs, chunkLimit, chunkOffset];
+          let count = 0;
+          for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
+            entities.push(this.rowToEntity(row));
+            count++;
+          }
+          if (count === 0) break;
+          chunkOffset += count;
+          if (count < chunkLimit) break;
         }
         return entities;
       }
 
-      const entities: Entity[] = [];
-      let chunkOffset = offset;
-      while (entities.length < limit) {
-        const chunkLimit = Math.min(CHUNK_SIZE, limit - entities.length);
-        const chunkArgs = [...baseArgs, chunkLimit, chunkOffset];
+      // Layered case: delta + base - tombstones
+      // CHUNKED reads via executeIterator to prevent bun:sqlite JSC GC crash
+      const LAYER_CHUNK = 5000;
+
+      // Get from delta (active gen only) — CHUNKED
+      const deltaArgs: (string | number)[] = [projectHash, branchName];
+      let deltaSql = `SELECT ${selectCols} FROM entities e
+                      JOIN file_generations fg
+                        ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+                      WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+      deltaSql += this.buildFilterClause(query.filters, deltaArgs, { projectHash, branchName });
+
+      const deltaEntities: Entity[] = [];
+      const deltaIds = new Set<string>();
+      let deltaOffset = 0;
+      while (true) {
+        const chunkArgs = [...deltaArgs, LAYER_CHUNK, deltaOffset];
         let count = 0;
-        for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
-          entities.push(this.rowToEntity(row));
+        for (const row of client.executeIterator({ sql: deltaSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
+          const e = this.rowToEntity(row);
+          deltaEntities.push(e);
+          deltaIds.add(e.id);
           count++;
         }
         if (count === 0) break;
-        chunkOffset += count;
-        if (count < chunkLimit) break;
+        deltaOffset += count;
+        if (count < LAYER_CHUNK) break;
       }
-      return entities;
-    }
+      log.w("ENTITY_OPS", "findEntities_layered", { delta: deltaEntities.length, branch: branchName });
 
-    // Layered case: delta + base - tombstones
-    // CHUNKED reads via executeIterator to prevent bun:sqlite JSC GC crash
-    const LAYER_CHUNK = 5000;
-    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
+      // Get from base (active gen only) — CHUNKED
+      const bArgs: (string | number)[] = [projectHash, base];
+      let bSql = `SELECT ${selectCols} FROM entities e
+                     JOIN file_generations fg
+                       ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+                     WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+      bSql += this.buildFilterClause(query.filters, bArgs, { projectHash, branchName: base });
 
-    // Get from delta (active gen only) — CHUNKED
-    const deltaArgs: (string | number)[] = [projectHash, branchName];
-    let deltaSql = `SELECT ${selectCols} FROM entities e
-                    JOIN file_generations fg
-                      ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-                    WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
-    deltaSql += this.buildFilterClause(query.filters, deltaArgs, { projectHash, branchName });
-
-    const deltaEntities: Entity[] = [];
-    const deltaIds = new Set<string>();
-    let deltaOffset = 0;
-    while (true) {
-      const chunkArgs = [...deltaArgs, LAYER_CHUNK, deltaOffset];
-      let count = 0;
-      for (const row of client.executeIterator({ sql: deltaSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
-        const e = this.rowToEntity(row);
-        deltaEntities.push(e);
-        deltaIds.add(e.id);
-        count++;
-      }
-      if (count === 0) break;
-      deltaOffset += count;
-      if (count < LAYER_CHUNK) break;
-    }
-    log.w("ENTITY_OPS", "findEntities_layered", { delta: deltaEntities.length, branch: branchName });
-
-    // Get from base (active gen only) — CHUNKED
-    const baseArgs: (string | number)[] = [projectHash, baseBranch];
-    let baseSql = `SELECT ${selectCols} FROM entities e
-                   JOIN file_generations fg
-                     ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-                   WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
-    baseSql += this.buildFilterClause(query.filters, baseArgs, { projectHash, branchName: baseBranch });
-
-    const baseEntities: Entity[] = [];
-    let baseOffset = 0;
-    while (true) {
-      const chunkArgs = [...baseArgs, LAYER_CHUNK, baseOffset];
-      let count = 0;
-      for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
-        const e = this.rowToEntity(row);
-        if (!deltaIds.has(e.id) && !tombstones.has(e.id)) {
-          baseEntities.push(e);
+      const baseEntities: Entity[] = [];
+      let baseOffset = 0;
+      while (true) {
+        const chunkArgs = [...bArgs, LAYER_CHUNK, baseOffset];
+        let count = 0;
+        for (const row of client.executeIterator({ sql: bSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
+          const e = this.rowToEntity(row);
+          if (!deltaIds.has(e.id) && !tombstones.has(e.id)) {
+            baseEntities.push(e);
+          }
+          count++;
         }
-        count++;
+        if (count === 0) break;
+        baseOffset += count;
+        if (count < LAYER_CHUNK) break;
       }
-      if (count === 0) break;
-      baseOffset += count;
-      if (count < LAYER_CHUNK) break;
-    }
-    log.w("ENTITY_OPS", "findEntities_base", { base: baseEntities.length, baseBranch });
+      log.w("ENTITY_OPS", "findEntities_base", { base: baseEntities.length, baseBranch: base });
 
-    // Combine and apply limit/offset
-    const combined = [...deltaEntities, ...baseEntities];
-    return combined.slice(offset, offset + limit);
+      // Combine and apply limit/offset
+      const combined = [...deltaEntities, ...baseEntities];
+      return combined.slice(offset, offset + limit);
+    });
   }
 
   /**
@@ -793,142 +808,152 @@ export class EntityOperations {
     filePath?: string | undefined;
     limit?: number;
   }): Promise<Entity[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+    const { baseBranch } = this.getContext();
+    // Tombstones come from versioning.db (separate mutex) — fetch before graph lock
+    const tombstones = baseBranch && this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
-    const limit = options.limit || 100;
+    return this._r(() => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    // Simple case: no base branch
-    if (!baseBranch) {
-      const args: (string | number)[] = [projectHash, branchName];
-      let sql = `SELECT e.* FROM entities e
-                 JOIN file_generations fg
-                   ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-                 WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
-      sql += this.buildSearchClause(options, args, { projectHash, branchName });
-      sql += " LIMIT ?";
-      args.push(limit);
+      const { projectHash, branchName, baseBranch: base } = this.getContext();
+      const limit = options.limit || 100;
 
-      const entities: Entity[] = [];
-      for (const row of client.executeIterator({ sql, args })) {
-        entities.push(this.rowToEntity(row));
-      }
-      return entities;
-    }
-
-    // Layered case — CHUNKED reads via executeIterator
-    const SEARCH_CHUNK = 5000;
-    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
-
-    // Get from delta (active gen only) — chunked
-    const deltaArgs: (string | number)[] = [projectHash, branchName];
-    let deltaSql = `SELECT e.* FROM entities e
-                    JOIN file_generations fg
-                      ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-                    WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
-    deltaSql += this.buildSearchClause(options, deltaArgs, { projectHash, branchName });
-
-    const deltaEntities: Entity[] = [];
-    let deltaOffset = 0;
-    while (true) {
-      let count = 0;
-      for (const row of client.executeIterator({
-        sql: deltaSql + " LIMIT ? OFFSET ?",
-        args: [...deltaArgs, SEARCH_CHUNK, deltaOffset],
-      })) {
-        deltaEntities.push(this.rowToEntity(row));
-        count++;
-      }
-      if (count === 0) break;
-      deltaOffset += count;
-      if (count < SEARCH_CHUNK) break;
-    }
-    const deltaIds = new Set(deltaEntities.map((e) => e.id));
-
-    // Get from base (active gen only) — chunked
-    const baseArgs: (string | number)[] = [projectHash, baseBranch];
-    let baseSql = `SELECT e.* FROM entities e
+      // Simple case: no base branch
+      if (!base) {
+        const args: (string | number)[] = [projectHash, branchName];
+        let sql = `SELECT e.* FROM entities e
                    JOIN file_generations fg
                      ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
                    WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
-    baseSql += this.buildSearchClause(options, baseArgs, { projectHash, branchName: baseBranch });
+        sql += this.buildSearchClause(options, args, { projectHash, branchName });
+        sql += " LIMIT ?";
+        args.push(limit);
 
-    const baseEntities: Entity[] = [];
-    let baseOffset = 0;
-    while (true) {
-      let count = 0;
-      for (const row of client.executeIterator({
-        sql: baseSql + " LIMIT ? OFFSET ?",
-        args: [...baseArgs, SEARCH_CHUNK, baseOffset],
-      })) {
-        const e = this.rowToEntity(row);
-        if (!deltaIds.has(e.id) && !tombstones.has(e.id)) baseEntities.push(e);
-        count++;
+        const entities: Entity[] = [];
+        for (const row of client.executeIterator({ sql, args })) {
+          entities.push(this.rowToEntity(row));
+        }
+        return entities;
       }
-      if (count === 0) break;
-      baseOffset += count;
-      if (count < SEARCH_CHUNK) break;
-    }
 
-    // Combine and limit
-    return [...deltaEntities, ...baseEntities].slice(0, limit);
+      // Layered case — CHUNKED reads via executeIterator
+      const SEARCH_CHUNK = 5000;
+
+      // Get from delta (active gen only) — chunked
+      const deltaArgs: (string | number)[] = [projectHash, branchName];
+      let deltaSql = `SELECT e.* FROM entities e
+                      JOIN file_generations fg
+                        ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+                      WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+      deltaSql += this.buildSearchClause(options, deltaArgs, { projectHash, branchName });
+
+      const deltaEntities: Entity[] = [];
+      let deltaOffset = 0;
+      while (true) {
+        let count = 0;
+        for (const row of client.executeIterator({
+          sql: deltaSql + " LIMIT ? OFFSET ?",
+          args: [...deltaArgs, SEARCH_CHUNK, deltaOffset],
+        })) {
+          deltaEntities.push(this.rowToEntity(row));
+          count++;
+        }
+        if (count === 0) break;
+        deltaOffset += count;
+        if (count < SEARCH_CHUNK) break;
+      }
+      const deltaIds = new Set(deltaEntities.map((e) => e.id));
+
+      // Get from base (active gen only) — chunked
+      const bArgs: (string | number)[] = [projectHash, base];
+      let bSql = `SELECT e.* FROM entities e
+                     JOIN file_generations fg
+                       ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+                     WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+      bSql += this.buildSearchClause(options, bArgs, { projectHash, branchName: base });
+
+      const baseEntities: Entity[] = [];
+      let baseOffset = 0;
+      while (true) {
+        let count = 0;
+        for (const row of client.executeIterator({
+          sql: bSql + " LIMIT ? OFFSET ?",
+          args: [...bArgs, SEARCH_CHUNK, baseOffset],
+        })) {
+          const e = this.rowToEntity(row);
+          if (!deltaIds.has(e.id) && !tombstones.has(e.id)) baseEntities.push(e);
+          count++;
+        }
+        if (count === 0) break;
+        baseOffset += count;
+        if (count < SEARCH_CHUNK) break;
+      }
+
+      // Combine and limit
+      return [...deltaEntities, ...baseEntities].slice(0, limit);
+    });
   }
 
   /**
    * Search entities by directory path (LIKE pattern) (layered: delta + base - tombstones)
    */
   async searchEntitiesInDirectory(directoryPath: string): Promise<Entity[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+    const { baseBranch } = this.getContext();
+    // Tombstones come from versioning.db (separate mutex) — fetch before graph lock
+    const tombstones = baseBranch && this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
-    const CHUNK = 5000;
+    return this._r(() => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    // Normalize path separators for cross-platform search
-    const forwardPath = directoryPath.replace(/\\/g, "/");
-    const backPath = directoryPath.replace(/\//g, "\\");
+      const { projectHash, branchName, baseBranch: base } = this.getContext();
+      const CHUNK = 5000;
 
-    const dirSql = `
-      SELECT e.* FROM entities e
-      JOIN file_generations fg
-        ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-      WHERE e.project_hash = ? AND e.branch_name = ?
-      AND (e.file_path LIKE ? OR e.file_path LIKE ?)
-      AND e.file_gen = fg.active_gen`;
+      // Normalize path separators for cross-platform search
+      const forwardPath = directoryPath.replace(/\\/g, "/");
+      const backPath = directoryPath.replace(/\//g, "\\");
 
-    // Chunked read helper using executeIterator
-    const chunkedDirRead = async (branch: string): Promise<Entity[]> => {
-      const entities: Entity[] = [];
-      let offset = 0;
-      while (true) {
-        let count = 0;
-        for (const row of client.executeIterator({
-          sql: dirSql + " LIMIT ? OFFSET ?",
-          args: [projectHash, branch, `${forwardPath}%`, `${backPath}%`, CHUNK, offset],
-        })) {
-          entities.push(this.rowToEntity(row));
-          count++;
+      const dirSql = `
+        SELECT e.* FROM entities e
+        JOIN file_generations fg
+          ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+        WHERE e.project_hash = ? AND e.branch_name = ?
+        AND (e.file_path LIKE ? OR e.file_path LIKE ?)
+        AND e.file_gen = fg.active_gen`;
+
+      // Chunked read helper
+      const chunkedDirRead = (branch: string): Entity[] => {
+        const entities: Entity[] = [];
+        let offset = 0;
+        while (true) {
+          let count = 0;
+          for (const row of client.executeIterator({
+            sql: dirSql + " LIMIT ? OFFSET ?",
+            args: [projectHash, branch, `${forwardPath}%`, `${backPath}%`, CHUNK, offset],
+          })) {
+            entities.push(this.rowToEntity(row));
+            count++;
+          }
+          if (count === 0) break;
+          offset += count;
+          if (count < CHUNK) break;
         }
-        if (count === 0) break;
-        offset += count;
-        if (count < CHUNK) break;
+        return entities;
+      };
+
+      // Simple case: no base branch
+      if (!base) {
+        return chunkedDirRead(branchName);
       }
-      return entities;
-    };
 
-    // Simple case: no base branch
-    if (!baseBranch) {
-      return chunkedDirRead(branchName);
-    }
+      // Layered case — tombstones already fetched above
+      const deltaEntities = chunkedDirRead(branchName);
+      const deltaIds = new Set(deltaEntities.map((e) => e.id));
+      const baseEntities = chunkedDirRead(base).filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
 
-    // Layered case
-    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
-    const deltaEntities = await chunkedDirRead(branchName);
-    const deltaIds = new Set(deltaEntities.map((e) => e.id));
-    const baseEntities = (await chunkedDirRead(baseBranch)).filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
-
-    return [...deltaEntities, ...baseEntities];
+      return [...deltaEntities, ...baseEntities];
+    });
   }
 
   /**
@@ -1048,49 +1073,54 @@ export class EntityOperations {
    * Get all entities for current project/branch (layered: delta + base - tombstones)
    */
   async getAllEntities(): Promise<Entity[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+    // Tombstones come from versioning.db (separate mutex) — fetch before graph lock
+    const { baseBranch } = this.getContext();
+    const tombstones = baseBranch && this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
-    // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
-    const CHUNK = 5000;
+    return this._r(() => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const baseSqlStr = `SELECT e.* FROM entities e
-          JOIN file_generations fg
-            ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-          WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+      const { projectHash, branchName, baseBranch: base } = this.getContext();
+      // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
+      const CHUNK = 5000;
 
-    const chunkedRead = async (branch: string): Promise<Entity[]> => {
-      const entities: Entity[] = [];
-      let offset = 0;
-      while (true) {
-        let count = 0;
-        for (const row of client.executeIterator({
-          sql: baseSqlStr + " LIMIT ? OFFSET ?",
-          args: [projectHash, branch, CHUNK, offset],
-        })) {
-          entities.push(this.rowToEntity(row));
-          count++;
+      const baseSqlStr = `SELECT e.* FROM entities e
+            JOIN file_generations fg
+              ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+            WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+
+      const chunkedRead = (branch: string): Entity[] => {
+        const entities: Entity[] = [];
+        let offset = 0;
+        while (true) {
+          let count = 0;
+          for (const row of client.executeIterator({
+            sql: baseSqlStr + " LIMIT ? OFFSET ?",
+            args: [projectHash, branch, CHUNK, offset],
+          })) {
+            entities.push(this.rowToEntity(row));
+            count++;
+          }
+          if (count === 0) break;
+          offset += count;
+          if (count < CHUNK) break;
         }
-        if (count === 0) break;
-        offset += count;
-        if (count < CHUNK) break;
+        return entities;
+      };
+
+      // Simple case: no base branch
+      if (!base) {
+        return chunkedRead(branchName);
       }
-      return entities;
-    };
 
-    // Simple case: no base branch
-    if (!baseBranch) {
-      return chunkedRead(branchName);
-    }
+      // Layered case: delta + base - tombstones
+      const deltaEntities = chunkedRead(branchName);
+      const deltaIds = new Set(deltaEntities.map((e) => e.id));
+      const baseEntities = chunkedRead(base).filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
 
-    // Layered case: delta + base - tombstones
-    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
-    const deltaEntities = await chunkedRead(branchName);
-    const deltaIds = new Set(deltaEntities.map((e) => e.id));
-    const baseEntities = (await chunkedRead(baseBranch)).filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
-
-    return [...deltaEntities, ...baseEntities];
+      return [...deltaEntities, ...baseEntities];
+    });
   }
 
   /**

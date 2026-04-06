@@ -165,6 +165,14 @@ export type ContextGetter = () => ProjectContext;
 export type WriteMutexFn = <T>(fn: () => T | Promise<T>) => Promise<T>;
 
 /**
+ * Delegate type for serializing ALL database access (reads + writes) through a per-DB mutex.
+ * With journal_mode=OFF + locking_mode=EXCLUSIVE, concurrent stmt.iterate() / stmt.run()
+ * on the same bun:sqlite connection can crash the process (SQLITE_MISUSE / JSC GC crash).
+ * This mutex serializes ALL access at the application level — same mutex as writes.
+ */
+export type DbMutexFn = <T>(fn: () => T | Promise<T>) => Promise<T>;
+
+/**
  * Delegate type for encoding metadata (CBOR serialization)
  */
 export type MetadataEncoder = (metadata: Record<string, unknown> | null | undefined) => Buffer | null;

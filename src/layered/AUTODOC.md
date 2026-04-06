@@ -1,6 +1,6 @@
 # Layered
 
-Three-layer branch-aware symbol indexing with deltas, caching, and semantic search.
+Three-layer branch-aware symbol indexing with semantic search and incremental updates.
 
 ## Overview
 

@@ -1,6 +1,6 @@
 # validation
 
-Multi-language code validation with before/after comparison and extensible linter support.
+Multi-language code validator with before/after comparison and extensible linter support
 
 ## Overview
 

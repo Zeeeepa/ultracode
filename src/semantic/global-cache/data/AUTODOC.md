@@ -1,6 +1,6 @@
 # Data
 
-> Contains statically defined built-in functions, standard library patterns, and framework-specific patterns for all supported programming languages, used to pre-seed the global embedding cache.
+Pre-built global cache of framework patterns and language built-ins for code indexing.
 
 ## Overview
 

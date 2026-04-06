@@ -125,9 +125,11 @@ export class GraphAdapter {
     const getContext = () => getRequestContext() ?? this._fallbackContext;
     const getStagingMode = () => this.versioningOps.stagingMode;
 
-    // Per-DB write mutexes — serialize writes to prevent async race conditions.
+    // Per-DB mutexes — serialize ALL access to prevent async race conditions.
+    // With journal_mode=OFF + locking_mode=EXCLUSIVE, both reads and writes must be serialized.
     // Only active in multi-DB mode (dbManager present); absent in single-DB/test mode.
     const writeGraph = dbManager ? <T>(fn: () => T | Promise<T>) => dbManager.writeGraph(fn) : undefined;
+    const readGraph = dbManager ? <T>(fn: () => T | Promise<T>) => dbManager.readGraph(fn) : undefined;
     const writeSemantic = dbManager ? <T>(fn: () => T | Promise<T>) => dbManager.writeSemantic(fn) : undefined;
     const writeCache = dbManager ? <T>(fn: () => T | Promise<T>) => dbManager.writeCache(fn) : undefined;
 
@@ -139,6 +141,7 @@ export class GraphAdapter {
       this.generationManager,
       getStagingMode,
       writeGraph,
+      readGraph,
     );
     this.relationshipOps = new RelationshipOperations(
       getGraphClient,
@@ -146,6 +149,7 @@ export class GraphAdapter {
       (row) => rowToRelationship(row as RelationshipRow),
       getStagingMode,
       writeGraph,
+      readGraph,
     );
 
     const vectorOpsContext: VectorOpsContext = {

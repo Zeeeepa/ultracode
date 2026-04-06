@@ -1,6 +1,6 @@
 # Engine
 
-Semantic three-way merge engine with AI-assisted conflict resolution and LCS-based diffing.
+Semantic merge engine with AI-assisted conflict resolution and three-way merge capabilities
 
 ## Overview
 

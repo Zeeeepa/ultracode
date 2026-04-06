@@ -1,6 +1,6 @@
 # Protobuf
 
-Analyzes relationships between protobuf definitions and gRPC implementations.
+Analyzes protobuf services and links them to implementations
 
 ## Overview
 

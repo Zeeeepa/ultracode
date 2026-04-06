@@ -1,6 +1,6 @@
 # Setup
 
-Interactive setup wizard for AI coding agents with hardware detection, embedding provider installation, LLM configuration, and MCP server auto-registration.
+Interactive setup wizard for semantic embedding installation with hardware detection and provider configuration.
 
 ## Overview
 

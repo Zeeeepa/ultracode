@@ -1,6 +1,6 @@
 # Taint
 
-Static analysis framework for detecting taint flow vulnerabilities in code.
+Security vulnerability detector tracking taint flows through source-sink-sanitizer analysis
 
 ## Overview
 

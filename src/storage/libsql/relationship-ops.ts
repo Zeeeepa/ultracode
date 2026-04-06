@@ -10,7 +10,7 @@
 
 import type { BatchResult, Relationship, RelationType } from "../../types/storage.js";
 import { encodeMetadata } from "./cbor-utils.js";
-import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
+import type { ClientGetter, ContextGetter, DbMutexFn, WriteMutexFn } from "./types.js";
 
 // =============================================================================
 // ROW MAPPER TYPE
@@ -45,6 +45,7 @@ export class RelationshipOperations {
     private rowToRelationship: RowToRelationshipMapper,
     private getStagingMode: () => boolean = () => false,
     private writeMutex?: WriteMutexFn,
+    private dbMutex?: DbMutexFn,
   ) {}
 
   /**
@@ -59,6 +60,11 @@ export class RelationshipOperations {
   /** Route write through per-DB mutex if available */
   private _w<T>(fn: () => Promise<T>): Promise<T> {
     return this.writeMutex ? this.writeMutex(fn) : fn();
+  }
+
+  /** Route read through per-DB mutex if available — serialized with writes. */
+  private _r<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.dbMutex ? this.dbMutex(fn) : Promise.resolve(fn());
   }
 
   /**
@@ -186,69 +192,72 @@ export class RelationshipOperations {
    * Get all relationships for an entity (as source or target) (layered: delta + base - tombstones)
    */
   async getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+    const { baseBranch } = this.getContext();
+    // Tombstones come from versioning.db (separate mutex) — fetch before graph lock
+    const tombstones =
+      baseBranch && this.tombstoneGetter ? await this.tombstoneGetter("relationship") : new Set<string>();
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
+    return this._r(() => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    // Simple case: no base branch
-    if (!baseBranch) {
-      let sql = `
+      const { projectHash, branchName, baseBranch: base } = this.getContext();
+
+      // Simple case: no base branch
+      if (!base) {
+        let sql = `
+          SELECT * FROM relationships
+          WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
+        `;
+        const args: (string | number)[] = [projectHash, branchName, entityId, entityId];
+
+        if (type) {
+          sql += " AND type = ?";
+          args.push(type);
+        }
+
+        const rels: Relationship[] = [];
+        for (const row of client.executeIterator({ sql, args })) {
+          rels.push(this.rowToRelationship(row));
+        }
+        return rels;
+      }
+
+      // Layered case — tombstones already fetched above
+      let deltaSql = `
         SELECT * FROM relationships
         WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
       `;
-      const args: (string | number)[] = [projectHash, branchName, entityId, entityId];
-
+      const deltaArgs: (string | number)[] = [projectHash, branchName, entityId, entityId];
       if (type) {
-        sql += " AND type = ?";
-        args.push(type);
+        deltaSql += " AND type = ?";
+        deltaArgs.push(type);
       }
 
-      const rels: Relationship[] = [];
-      for (const row of client.executeIterator({ sql, args })) {
-        rels.push(this.rowToRelationship(row));
+      const deltaRels: Relationship[] = [];
+      for (const row of client.executeIterator({ sql: deltaSql, args: deltaArgs })) {
+        deltaRels.push(this.rowToRelationship(row));
       }
-      return rels;
-    }
+      const deltaIds = new Set(deltaRels.map((r) => r.id));
 
-    // Layered case
-    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("relationship") : new Set<string>();
+      let baseSql = `
+        SELECT * FROM relationships
+        WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
+      `;
+      const baseArgs: (string | number)[] = [projectHash, base, entityId, entityId];
+      if (type) {
+        baseSql += " AND type = ?";
+        baseArgs.push(type);
+      }
 
-    // Get from delta
-    let deltaSql = `
-      SELECT * FROM relationships
-      WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
-    `;
-    const deltaArgs: (string | number)[] = [projectHash, branchName, entityId, entityId];
-    if (type) {
-      deltaSql += " AND type = ?";
-      deltaArgs.push(type);
-    }
+      const baseRels: Relationship[] = [];
+      for (const row of client.executeIterator({ sql: baseSql, args: baseArgs })) {
+        const r = this.rowToRelationship(row);
+        if (!deltaIds.has(r.id) && !tombstones.has(r.id)) baseRels.push(r);
+      }
 
-    const deltaRels: Relationship[] = [];
-    for (const row of client.executeIterator({ sql: deltaSql, args: deltaArgs })) {
-      deltaRels.push(this.rowToRelationship(row));
-    }
-    const deltaIds = new Set(deltaRels.map((r) => r.id));
-
-    // Get from base
-    let baseSql = `
-      SELECT * FROM relationships
-      WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
-    `;
-    const baseArgs: (string | number)[] = [projectHash, baseBranch, entityId, entityId];
-    if (type) {
-      baseSql += " AND type = ?";
-      baseArgs.push(type);
-    }
-
-    const baseRels: Relationship[] = [];
-    for (const row of client.executeIterator({ sql: baseSql, args: baseArgs })) {
-      const r = this.rowToRelationship(row);
-      if (!deltaIds.has(r.id) && !tombstones.has(r.id)) baseRels.push(r);
-    }
-
-    return [...deltaRels, ...baseRels];
+      return [...deltaRels, ...baseRels];
+    });
   }
 
   /**
@@ -326,43 +335,105 @@ export class RelationshipOperations {
     limit?: number | undefined;
     offset?: number | undefined;
   }): Promise<Relationship[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+    return this._r(() => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
-    const limit = query.limit || 100;
-    const offset = query.offset || 0;
+      const { projectHash, branchName, baseBranch } = this.getContext();
+      const limit = query.limit || 100;
+      const offset = query.offset || 0;
 
-    // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
-    const CHUNK = 5000;
+      // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
+      const CHUNK = 5000;
 
-    // Simple case: no base branch — chunked if limit > CHUNK
-    if (!baseBranch) {
-      const filterArgs: (string | number)[] = [projectHash, branchName];
-      let filterSql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
-      filterSql += this.buildTypeFilter(query.filters?.relationshipType, filterArgs);
-      filterSql += this.buildFromIdFilter(query.filters?.fromId, filterArgs);
-      filterSql += this.buildToIdFilter(query.filters?.toId, filterArgs);
+      // Simple case: no base branch — chunked if limit > CHUNK
+      if (!baseBranch) {
+        const filterArgs: (string | number)[] = [projectHash, branchName];
+        let filterSql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
+        filterSql += this.buildTypeFilter(query.filters?.relationshipType, filterArgs);
+        filterSql += this.buildFromIdFilter(query.filters?.fromId, filterArgs);
+        filterSql += this.buildToIdFilter(query.filters?.toId, filterArgs);
+
+        if (limit <= CHUNK) {
+          const relationships: Relationship[] = [];
+          for (const row of client.executeIterator({
+            sql: filterSql + " LIMIT ? OFFSET ?",
+            args: [...filterArgs, limit, offset],
+          })) {
+            relationships.push(this.rowToRelationship(row));
+          }
+          return relationships;
+        }
+        // Chunked read for large limits
+        const relationships: Relationship[] = [];
+        let chunkOffset = offset;
+        while (relationships.length < limit) {
+          const chunkLimit = Math.min(CHUNK, limit - relationships.length);
+          let count = 0;
+          for (const row of client.executeIterator({
+            sql: filterSql + " LIMIT ? OFFSET ?",
+            args: [...filterArgs, chunkLimit, chunkOffset],
+          })) {
+            relationships.push(this.rowToRelationship(row));
+            count++;
+          }
+          if (count === 0) break;
+          chunkOffset += count;
+          if (count < chunkLimit) break;
+        }
+        return relationships;
+      }
+
+      // Layered case: CTE — chunked if limit > CHUNK
+      const typeFilter = this.buildTypeFilterForCTE(query.filters?.relationshipType);
+      const fromIdFilter = this.buildFromIdFilterForCTE(query.filters?.fromId);
+      const toIdFilter = this.buildToIdFilterForCTE(query.filters?.toId);
+      const combinedFilters = `${typeFilter} ${fromIdFilter} ${toIdFilter}`;
+
+      const cteSql = `
+        WITH
+          delta AS (
+            SELECT * FROM relationships
+            WHERE project_hash = ?1 AND branch_name = ?2 ${combinedFilters}
+          ),
+          tombstone_ids AS (
+            SELECT entity_id FROM tombstones
+            WHERE project_hash = ?1 AND branch_name = ?2 AND entity_type = 'relationship'
+          ),
+          base_filtered AS (
+            SELECT * FROM relationships
+            WHERE project_hash = ?1 AND branch_name = ?3 ${combinedFilters}
+              AND id NOT IN (SELECT id FROM delta)
+              AND id NOT IN (SELECT entity_id FROM tombstone_ids)
+          ),
+          layered AS (
+            SELECT * FROM delta
+            UNION ALL
+            SELECT * FROM base_filtered
+          )
+        SELECT * FROM layered
+        LIMIT ?4 OFFSET ?5
+      `;
 
       if (limit <= CHUNK) {
         const relationships: Relationship[] = [];
         for (const row of client.executeIterator({
-          sql: filterSql + " LIMIT ? OFFSET ?",
-          args: [...filterArgs, limit, offset],
+          sql: cteSql,
+          args: [projectHash, branchName, baseBranch, limit, offset],
         })) {
           relationships.push(this.rowToRelationship(row));
         }
         return relationships;
       }
-      // Chunked read for large limits
+
       const relationships: Relationship[] = [];
       let chunkOffset = offset;
       while (relationships.length < limit) {
         const chunkLimit = Math.min(CHUNK, limit - relationships.length);
         let count = 0;
         for (const row of client.executeIterator({
-          sql: filterSql + " LIMIT ? OFFSET ?",
-          args: [...filterArgs, chunkLimit, chunkOffset],
+          sql: cteSql,
+          args: [projectHash, branchName, baseBranch, chunkLimit, chunkOffset],
         })) {
           relationships.push(this.rowToRelationship(row));
           count++;
@@ -372,67 +443,7 @@ export class RelationshipOperations {
         if (count < chunkLimit) break;
       }
       return relationships;
-    }
-
-    // Layered case: CTE — chunked if limit > CHUNK
-    const typeFilter = this.buildTypeFilterForCTE(query.filters?.relationshipType);
-    const fromIdFilter = this.buildFromIdFilterForCTE(query.filters?.fromId);
-    const toIdFilter = this.buildToIdFilterForCTE(query.filters?.toId);
-    const combinedFilters = `${typeFilter} ${fromIdFilter} ${toIdFilter}`;
-
-    const cteSql = `
-      WITH
-        delta AS (
-          SELECT * FROM relationships
-          WHERE project_hash = ?1 AND branch_name = ?2 ${combinedFilters}
-        ),
-        tombstone_ids AS (
-          SELECT entity_id FROM tombstones
-          WHERE project_hash = ?1 AND branch_name = ?2 AND entity_type = 'relationship'
-        ),
-        base_filtered AS (
-          SELECT * FROM relationships
-          WHERE project_hash = ?1 AND branch_name = ?3 ${combinedFilters}
-            AND id NOT IN (SELECT id FROM delta)
-            AND id NOT IN (SELECT entity_id FROM tombstone_ids)
-        ),
-        layered AS (
-          SELECT * FROM delta
-          UNION ALL
-          SELECT * FROM base_filtered
-        )
-      SELECT * FROM layered
-      LIMIT ?4 OFFSET ?5
-    `;
-
-    if (limit <= CHUNK) {
-      const relationships: Relationship[] = [];
-      for (const row of client.executeIterator({
-        sql: cteSql,
-        args: [projectHash, branchName, baseBranch, limit, offset],
-      })) {
-        relationships.push(this.rowToRelationship(row));
-      }
-      return relationships;
-    }
-
-    const relationships: Relationship[] = [];
-    let chunkOffset = offset;
-    while (relationships.length < limit) {
-      const chunkLimit = Math.min(CHUNK, limit - relationships.length);
-      let count = 0;
-      for (const row of client.executeIterator({
-        sql: cteSql,
-        args: [projectHash, branchName, baseBranch, chunkLimit, chunkOffset],
-      })) {
-        relationships.push(this.rowToRelationship(row));
-        count++;
-      }
-      if (count === 0) break;
-      chunkOffset += count;
-      if (count < chunkLimit) break;
-    }
-    return relationships;
+    });
   }
 
   /**
@@ -464,22 +475,66 @@ export class RelationshipOperations {
    * Layered: returns delta + base - tombstones using CTE.
    */
   async getAllRelationships(): Promise<Relationship[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+    return this._r(() => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
-    // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
-    const CHUNK = 5000;
+      const { projectHash, branchName, baseBranch } = this.getContext();
+      // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
+      const CHUNK = 5000;
 
-    // Simple case: no base branch — chunked
-    if (!baseBranch) {
+      // Simple case: no base branch — chunked
+      if (!baseBranch) {
+        const relationships: Relationship[] = [];
+        let offset = 0;
+        while (true) {
+          let count = 0;
+          for (const row of client.executeIterator({
+            sql: "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ? LIMIT ? OFFSET ?",
+            args: [projectHash, branchName, CHUNK, offset],
+          })) {
+            relationships.push(this.rowToRelationship(row));
+            count++;
+          }
+          if (count === 0) break;
+          offset += count;
+          if (count < CHUNK) break;
+        }
+        return relationships;
+      }
+
+      // Layered case: CTE query — chunked via wrapping with LIMIT/OFFSET
+      const cteSql = `
+        WITH
+          delta AS (
+            SELECT * FROM relationships
+            WHERE project_hash = ?1 AND branch_name = ?2
+          ),
+          tombstone_ids AS (
+            SELECT entity_id FROM tombstones
+            WHERE project_hash = ?1 AND branch_name = ?2 AND entity_type = 'relationship'
+          ),
+          base_filtered AS (
+            SELECT * FROM relationships
+            WHERE project_hash = ?1 AND branch_name = ?3
+              AND id NOT IN (SELECT id FROM delta)
+              AND id NOT IN (SELECT entity_id FROM tombstone_ids)
+          ),
+          combined AS (
+            SELECT * FROM delta
+            UNION ALL
+            SELECT * FROM base_filtered
+          )
+        SELECT * FROM combined LIMIT ?4 OFFSET ?5
+      `;
+
       const relationships: Relationship[] = [];
       let offset = 0;
       while (true) {
         let count = 0;
         for (const row of client.executeIterator({
-          sql: "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ? LIMIT ? OFFSET ?",
-          args: [projectHash, branchName, CHUNK, offset],
+          sql: cteSql,
+          args: [projectHash, branchName, baseBranch, CHUNK, offset],
         })) {
           relationships.push(this.rowToRelationship(row));
           count++;
@@ -489,48 +544,6 @@ export class RelationshipOperations {
         if (count < CHUNK) break;
       }
       return relationships;
-    }
-
-    // Layered case: CTE query — chunked via wrapping with LIMIT/OFFSET
-    const cteSql = `
-      WITH
-        delta AS (
-          SELECT * FROM relationships
-          WHERE project_hash = ?1 AND branch_name = ?2
-        ),
-        tombstone_ids AS (
-          SELECT entity_id FROM tombstones
-          WHERE project_hash = ?1 AND branch_name = ?2 AND entity_type = 'relationship'
-        ),
-        base_filtered AS (
-          SELECT * FROM relationships
-          WHERE project_hash = ?1 AND branch_name = ?3
-            AND id NOT IN (SELECT id FROM delta)
-            AND id NOT IN (SELECT entity_id FROM tombstone_ids)
-        ),
-        combined AS (
-          SELECT * FROM delta
-          UNION ALL
-          SELECT * FROM base_filtered
-        )
-      SELECT * FROM combined LIMIT ?4 OFFSET ?5
-    `;
-
-    const relationships: Relationship[] = [];
-    let offset = 0;
-    while (true) {
-      let count = 0;
-      for (const row of client.executeIterator({
-        sql: cteSql,
-        args: [projectHash, branchName, baseBranch, CHUNK, offset],
-      })) {
-        relationships.push(this.rowToRelationship(row));
-        count++;
-      }
-      if (count === 0) break;
-      offset += count;
-      if (count < CHUNK) break;
-    }
-    return relationships;
+    });
   }
 }

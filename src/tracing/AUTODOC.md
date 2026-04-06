@@ -1,6 +1,6 @@
 # Tracing Module
 
-Static code flow analysis engine for understanding code behavior without runtime execution.
+Static code flow analysis for understanding execution paths and data dependencies without runtime.
 
 ## Overview
 

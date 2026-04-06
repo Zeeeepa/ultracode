@@ -1,6 +1,6 @@
 # Tools Module
 
-MCP tool registry, schemas, handlers, and response formatting utilities.
+MCP tool infrastructure with type-safe handlers, schemas, utilities for code analysis and metrics collection.
 
 ## Overview
 

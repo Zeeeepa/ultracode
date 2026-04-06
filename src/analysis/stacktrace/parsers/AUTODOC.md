@@ -1,6 +1,6 @@
 # Stacktrace Parsers
 
-Language-specific stacktrace parser implementations for error analysis
+Language-specific stacktrace parsers that extract and structure error information from runtime exceptions across multiple programming languages.
 
 ## Overview
 

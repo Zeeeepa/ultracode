@@ -118,6 +118,25 @@ const CALL_EDGE_TYPES = new Set(["calls", "imports", "references"]);
 // Edge types used for backwards tracing (reverse direction)
 const CALLED_BY_EDGE_TYPES = new Set(["called_by", "imported_by", "referenced_by"]);
 
+/**
+ * All edge types needed for tracing / taint analysis.
+ * Pass to loadGraph(TRACING_EDGE_TYPES) to filter at SQL level
+ * instead of loading 400K+ relationship rows.
+ */
+export const TRACING_EDGE_TYPES = [
+  "calls",
+  "imports",
+  "references",
+  "called_by",
+  "imported_by",
+  "referenced_by",
+  "contains", // needed for orphan-linking phase
+  "inherits",
+  "implements",
+  "implemented_by",
+  "overrides",
+];
+
 // =============================================================================
 // GRAPHOLOGY PATH BUILDER
 // =============================================================================
@@ -126,6 +145,7 @@ export class GraphologyPathBuilder {
   private storage: GraphStorage;
   private graph: Graph<GraphNodeAttributes, GraphEdgeAttributes>;
   private loaded = false;
+  private loadedEdgeTypes: string | undefined; // serialized edge types key for cache invalidation
   private loadStats: GraphStats | null = null;
 
   constructor(storage: GraphStorage) {
@@ -147,11 +167,14 @@ export class GraphologyPathBuilder {
   // ===========================================================================
 
   /**
-   * Load entire graph into memory with 2 SQL queries.
-   * This is the key optimization - replaces 25000+ individual queries.
+   * Load graph into memory with 2 SQL queries.
+   * @param edgeTypes — if provided, only load relationships of these types (SQL-level filter).
+   *   Without this, ALL relationships are loaded (~463K rows), most discarded in memory.
+   *   With filter, only relevant edges are fetched (~70K rows for tracing types).
    */
-  async loadGraph(): Promise<GraphStats> {
-    if (this.loaded && this.loadStats) {
+  async loadGraph(edgeTypes?: string[]): Promise<GraphStats> {
+    const edgeKey = edgeTypes ? edgeTypes.slice().sort().join(",") : "*";
+    if (this.loaded && this.loadStats && this.loadedEdgeTypes === edgeKey) {
       return this.loadStats;
     }
 
@@ -166,10 +189,18 @@ export class GraphologyPathBuilder {
       typeof (this.storage as { getProjectContext?: () => unknown }).getProjectContext === "function"
         ? (this.storage as { getProjectContext: () => unknown }).getProjectContext()
         : undefined;
-    log.d("GRAPHPATH", "loading_graph", { ctx: JSON.stringify(projectContext) });
+    log.d("GRAPHPATH", "loading_graph", { ctx: JSON.stringify(projectContext), edgeTypes: edgeTypes?.join(",") });
 
-    // Two queries instead of thousands
-    const [entities, relationships] = await Promise.all([this.storage.getAllEntities(), this.getAllRelationships()]);
+    // Two queries instead of thousands.
+    // When edgeTypes is set, use findRelationships with SQL-level type filter
+    // to avoid loading hundreds of thousands of unused relationship rows.
+    const relPromise = edgeTypes
+      ? this.storage.findRelationships({
+          filters: { relationshipType: edgeTypes as import("../types/storage.js").RelationType[] },
+          limit: 500_000,
+        })
+      : this.getAllRelationships();
+    const [entities, relationships] = await Promise.all([this.storage.getAllEntities(), relPromise]);
 
     // Build name-to-id lookup for resolving external references
     // Key: entity name (lowercase), Value: array of entity IDs (may have multiple with same name)
@@ -381,6 +412,7 @@ export class GraphologyPathBuilder {
     };
 
     this.loaded = true;
+    this.loadedEdgeTypes = edgeKey;
 
     // Log edge type distribution
     const edgeTypeSummary = Array.from(edgeTypeCounts.entries())

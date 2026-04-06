@@ -1,6 +1,6 @@
 # Analysis Module
 
-Detects active usage of API schemas and technology stacks in projects.
+Multi-signal detection system for active GraphQL, Protobuf, Swagger schema usage and technology stack identification.
 
 ## Overview
 

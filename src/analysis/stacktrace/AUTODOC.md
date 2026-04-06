@@ -1,6 +1,6 @@
 # Stacktrace Analyzer
 
-Analyzes stacktraces by parsing frames, classifying errors, resolving entities, and generating root cause diagnosis with fixes.
+Analyzes and diagnoses errors from stacktrace text
 
 ## Overview
 

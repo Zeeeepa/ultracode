@@ -1,5 +1,7 @@
 # modification
 
+Safe code modification and file operations with universal preview and impact estimation.
+
 ## Overview
 
 Entity-based code and file modification engine with transactional workflow and full audit trail support. All destructive operations support preview-first mode, automatic snapshot creation for rollback, before/after validation tracking, and incremental graph and embedding updates. Handles large files (>1 MB) via streaming; uses WASM SIMD-accelerated diff when available. Three core classes collaborate: `CodeModifier` orchestrates entity code replacement, `FileOperations` provides copy/rename/split/synthesize workflows, and `PreviewManager` generates unified diffs with impact estimation. Operations default to dry-run (preview) mode unless explicitly applied.

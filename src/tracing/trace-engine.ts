@@ -12,7 +12,7 @@
 
 import { log } from "../logging/index.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
-import { GraphologyPathBuilder, type LinearTrace } from "./graphology-path-builder.js";
+import { GraphologyPathBuilder, type LinearTrace, TRACING_EDGE_TYPES } from "./graphology-path-builder.js";
 import { PathBuilder } from "./path-builder.js";
 import type {
   BlockingCondition,
@@ -134,7 +134,7 @@ export class TraceEngine {
    */
   async getGraphStats(): Promise<{ nodes: number; edges: number; loadTimeMs: number } | null> {
     if (!this.graphologyBuilder.isLoaded()) {
-      await this.graphologyBuilder.loadGraph();
+      await this.graphologyBuilder.loadGraph(TRACING_EDGE_TYPES);
     }
     return this.graphologyBuilder.getStats();
   }
@@ -166,7 +166,7 @@ export class TraceEngine {
     const startTime = performance.now();
 
     // 1. Load graph into memory (cached after first call)
-    const stats = await this.graphologyBuilder.loadGraph();
+    const stats = await this.graphologyBuilder.loadGraph(TRACING_EDGE_TYPES);
     log.i("TRACEENGINE", "graph_loaded", {
       nodes: stats.nodes,
       edges: stats.edges,
@@ -521,7 +521,7 @@ export class TraceEngine {
     // 2. Use optimized backwards trace if enabled
     if (this.useOptimized) {
       const startTime = performance.now();
-      await this.graphologyBuilder.loadGraph();
+      await this.graphologyBuilder.loadGraph(TRACING_EDGE_TYPES);
 
       const backwardsResult = await this.graphologyBuilder.traceBackwards(targetEntity.id, maxDepth);
 

@@ -1,6 +1,6 @@
 # Db
 
-Parses and analyzes database schemas, migrations, ORM models, and links them to code entities.
+Database schema analysis module linking ORM/SQL to code entities and detecting migrations.
 
 ## Overview
 

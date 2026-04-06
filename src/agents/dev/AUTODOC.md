@@ -1,6 +1,6 @@
 # Dev
 
-Modular file collection, parsing, and indexing pipeline for source code repository analysis.
+Recursively collects source files respecting patterns, supports multiple languages via AST and heuristic parsing, and manages incremental indexing with vendored directory detection.
 
 ## Overview
 

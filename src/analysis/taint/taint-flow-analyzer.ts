@@ -1,7 +1,7 @@
 import type Graph from "graphology";
 import { log } from "../../logging/index.js";
 import type { GraphEdgeAttributes, GraphNodeAttributes } from "../../tracing/graphology-path-builder.js";
-import { GraphologyPathBuilder } from "../../tracing/graphology-path-builder.js";
+import { GraphologyPathBuilder, TRACING_EDGE_TYPES } from "../../tracing/graphology-path-builder.js";
 import type { Entity, GraphStorage } from "../../types/storage.js";
 import { classifyAsSanitizer, classifyAsSink, classifyAsSource } from "./catalogs.js";
 import type {
@@ -51,7 +51,8 @@ export class TaintFlowAnalyzer {
   async analyze(params: TaintAnalysisParams): Promise<TaintAnalysisResult> {
     const startTime = performance.now();
 
-    await this.pathBuilder.loadGraph();
+    // Load only tracing-relevant edge types — cuts 463K → ~70K relationships (SQL-level filter)
+    await this.pathBuilder.loadGraph(TRACING_EDGE_TYPES);
 
     let allEntities = entitiesCache.get(this.storage);
     if (!allEntities) {

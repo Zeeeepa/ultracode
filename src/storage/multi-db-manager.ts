@@ -155,15 +155,28 @@ export class MultiDbManager {
     return this.paths;
   }
 
-  // ─── Write-serialized accessors (analog of Zig db_mutex) ───────────
+  // ─── Serialized DB accessors (analog of Zig db_mutex) ──────────────
+  // With journal_mode=OFF + locking_mode=EXCLUSIVE, ALL access (reads + writes)
+  // must be serialized to prevent bun:sqlite SQLITE_MISUSE / JSC GC crashes.
+  // Same mutex for reads and writes — full serialization per DB.
 
-  /** Execute fn exclusively on graph.db — all other graph writers wait. */
+  /** Execute fn exclusively on graph.db — all other graph access waits. */
   writeGraph<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.mutexes.graph.run(fn);
+  }
+
+  /** Execute read fn exclusively on graph.db — serialized with writes. */
+  readGraph<T>(fn: () => T | Promise<T>): Promise<T> {
     return this.mutexes.graph.run(fn);
   }
 
   /** Execute fn exclusively on semantic.db */
   writeSemantic<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.mutexes.semantic.run(fn);
+  }
+
+  /** Execute read fn exclusively on semantic.db — serialized with writes. */
+  readSemantic<T>(fn: () => T | Promise<T>): Promise<T> {
     return this.mutexes.semantic.run(fn);
   }
 
@@ -174,6 +187,11 @@ export class MultiDbManager {
 
   /** Execute fn exclusively on cache.db */
   writeCache<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.mutexes.cache.run(fn);
+  }
+
+  /** Execute read fn exclusively on cache.db — serialized with writes. */
+  readCache<T>(fn: () => T | Promise<T>): Promise<T> {
     return this.mutexes.cache.run(fn);
   }
 

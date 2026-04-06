@@ -1,6 +1,6 @@
 # Module: D:/github/ultracode/src/autodoc/generator
 
-Automatically generates and maintains AUTODOC.md templates using incremental updates and LLM enrichment.
+Generates and maintains AUTODOC.md documentation with change detection, incremental updates, and LLM enrichment.
 
 ## Interface
 

@@ -1,6 +1,6 @@
 # gpu
 
-Auto-selects optimal GPU vector backend with priority-based graceful degradation.
+Auto-selects optimal vector computation backend for GPU hardware.
 
 ## Overview
 

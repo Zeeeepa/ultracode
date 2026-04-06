@@ -1,6 +1,6 @@
 # GraphQL
 
-Parses GraphQL schemas and links them to source code implementations and generated code.
+Analyzes GraphQL schemas and links them to source code implementations.
 
 ## Overview
 
