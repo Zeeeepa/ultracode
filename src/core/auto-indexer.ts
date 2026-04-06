@@ -644,12 +644,23 @@ async function buildTrigramIndex(projectDir: string): Promise<void> {
     "**/*.{json,yaml,yml,toml}",
   ];
   const ignore = [
-    "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**",
-    "**/.git/**", "**/vendor/**", "**/target/**", "**/__pycache__/**",
-    "**/coverage/**", "**/.next/**", "**/.nuxt/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/.git/**",
+    "**/vendor/**",
+    "**/target/**",
+    "**/__pycache__/**",
+    "**/coverage/**",
+    "**/.next/**",
+    "**/.nuxt/**",
   ];
 
   const files = await fg.glob(patterns, { cwd: projectDir, ignore, absolute: true });
+
+  // Normalize project dir to forward slashes for reliable path stripping (Windows compat)
+  const normalizedDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
   const builder = new TrigramBuilder();
   let indexed = 0;
@@ -659,8 +670,8 @@ async function buildTrigramIndex(projectDir: string): Promise<void> {
       if (content.length === 0 || content.length > 1_000_000) continue; // skip empty/huge
       const trigrams = extractTrigrams(content);
       if (trigrams.entries.length === 0) continue;
-      // Use relative path for portability
-      const relPath = filePath.replace(projectDir, "").replace(/^[\\/]/, "").replace(/\\/g, "/");
+      // Use relative path for portability (fast-glob always returns forward slashes)
+      const relPath = filePath.replace(normalizedDir + "/", "");
       builder.addFile(relPath, BigInt(content.length), trigrams);
       indexed++;
     } catch {
