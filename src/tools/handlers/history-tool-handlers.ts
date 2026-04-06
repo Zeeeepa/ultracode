@@ -28,6 +28,48 @@ function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify({ error: message }) }] };
 }
 
+function jsonResult(data: unknown): ToolResult {
+  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+}
+
+/**
+ * Shared setup: acquire storage → adapter → Prolly components → TimeTravelManager.
+ * Eliminates 15-line setup duplication across 4 handlers.
+ */
+async function withTimeTravel<T>(
+  handler: BaseToolHandler<unknown>,
+  projectPath: string | undefined,
+  operation: (
+    timeTravel: TimeTravelManager,
+    commitManager: ReturnType<NonNullable<ReturnType<GraphStorageLibSQL["getLibSQLAdapter"]>>["getCommitManager"]>,
+  ) => Promise<T>,
+  operationName: string,
+): Promise<ToolResult> {
+  const storage = (await (handler as any).ensureGraphStorageForProject(projectPath)) as GraphStorageLibSQL;
+  const adapter = storage.getLibSQLAdapter?.();
+
+  if (!adapter?.getProllyNodeStore || !adapter?.getCommitManager) {
+    return errorResult("Prolly Tree not available - ensure project is indexed");
+  }
+
+  const nodeStore = adapter.getProllyNodeStore();
+  const commitManager = adapter.getCommitManager();
+
+  if (!nodeStore || !commitManager) {
+    return errorResult("Prolly Tree components not initialized");
+  }
+
+  const timeTravel = new TimeTravelManager(nodeStore, commitManager);
+
+  try {
+    const result = await operation(timeTravel, commitManager);
+    return jsonResult(result);
+  } catch (error) {
+    log.e("HISTORY", `${operationName}_failed`, { error: (error as Error).message });
+    return errorResult(`Failed to ${operationName.replace(/_/g, " ")}: ${(error as Error).message}`);
+  }
+}
+
 // =============================================================================
 // GET ENTITY HISTORY HANDLER
 // =============================================================================
@@ -38,50 +80,24 @@ export class GetEntityHistoryToolHandler extends BaseToolHandler<z.infer<typeof 
   }
 
   protected async execute(args: z.infer<typeof GetEntityHistorySchema>): Promise<ToolResult> {
-    const storage = (await this.ensureGraphStorageForProject(args.projectPath)) as GraphStorageLibSQL;
-    const adapter = storage.getLibSQLAdapter?.();
-
-    if (!adapter?.getProllyNodeStore || !adapter?.getCommitManager) {
-      return errorResult("Prolly Tree not available - ensure project is indexed");
-    }
-
-    const nodeStore = adapter.getProllyNodeStore();
-    const commitManager = adapter.getCommitManager();
-
-    if (!nodeStore || !commitManager) {
-      return errorResult("Prolly Tree components not initialized");
-    }
-
-    const timeTravel = new TimeTravelManager(nodeStore, commitManager);
-
-    try {
-      const history = await timeTravel.getEntityHistory(args.entityId, args.limit);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                entityId: args.entityId,
-                changes: history.map((h) => ({
-                  commitHash: h.commitHash,
-                  changeType: h.changeType,
-                  timestamp: new Date(h.timestamp).toISOString(),
-                  entitySnapshot: h.newValue ? deserializeEntity(h.newValue) : null,
-                })),
-                totalChanges: history.length,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    } catch (error) {
-      log.e("HISTORY", "get_entity_history_failed", { error: (error as Error).message });
-      return errorResult(`Failed to get entity history: ${(error as Error).message}`);
-    }
+    return withTimeTravel(
+      this,
+      args.projectPath,
+      async (timeTravel) => {
+        const history = await timeTravel.getEntityHistory(args.entityId, args.limit);
+        return {
+          entityId: args.entityId,
+          changes: history.map((h) => ({
+            commitHash: h.commitHash,
+            changeType: h.changeType,
+            timestamp: new Date(h.timestamp).toISOString(),
+            entitySnapshot: h.newValue ? deserializeEntity(h.newValue) : null,
+          })),
+          totalChanges: history.length,
+        };
+      },
+      "get_entity_history",
+    );
   }
 }
 
@@ -95,60 +111,40 @@ export class DiffCommitsToolHandler extends BaseToolHandler<z.infer<typeof DiffC
   }
 
   protected async execute(args: z.infer<typeof DiffCommitsSchema>): Promise<ToolResult> {
-    const storage = (await this.ensureGraphStorageForProject(args.projectPath)) as GraphStorageLibSQL;
-    const adapter = storage.getLibSQLAdapter?.();
+    return withTimeTravel(
+      this,
+      args.projectPath,
+      async (timeTravel, commitManager) => {
+        let commitB = args.commitB;
+        if (!commitB) {
+          const head = await commitManager!.getBranchHead();
+          if (!head) throw new Error("No commits found - index the project first");
+          commitB = head.commitHash;
+        }
 
-    if (!adapter?.getProllyNodeStore || !adapter?.getCommitManager) {
-      return errorResult("Prolly Tree not available - ensure project is indexed");
-    }
+        const diff = await timeTravel.diffCommits(args.commitA, commitB);
+        if (!diff) throw new Error("one or both commits not found");
 
-    const nodeStore = adapter.getProllyNodeStore();
-    const commitManager = adapter.getCommitManager();
+        const result: Record<string, unknown> = {
+          commitA: args.commitA,
+          commitB,
+          summary: {
+            added: diff.treeDiff.added.length,
+            modified: diff.treeDiff.modified.length,
+            deleted: diff.treeDiff.deleted.length,
+          },
+        };
 
-    if (!nodeStore || !commitManager) {
-      return errorResult("Prolly Tree components not initialized");
-    }
+        if (args.includeEntities) {
+          result["added"] = diff.treeDiff.added.map((e) => ({ key: e.key }));
+          result["modified"] = diff.treeDiff.modified.map((e) => ({ key: e.key }));
+          result["deleted"] = diff.treeDiff.deleted.map((e) => ({ key: e.key }));
+        }
 
-    const timeTravel = new TimeTravelManager(nodeStore, commitManager);
-
-    try {
-      // Get commitB (default to HEAD)
-      let commitB = args.commitB;
-      if (!commitB) {
-        const head = await commitManager.getBranchHead();
-        if (!head) return errorResult("No commits found - index the project first");
-        commitB = head.commitHash;
-      }
-
-      const diff = await timeTravel.diffCommits(args.commitA, commitB);
-
-      if (!diff) {
-        return errorResult(`Failed to diff commits: one or both commits not found`);
-      }
-
-      const result: Record<string, unknown> = {
-        commitA: args.commitA,
-        commitB,
-        summary: {
-          added: diff.treeDiff.added.length,
-          modified: diff.treeDiff.modified.length,
-          deleted: diff.treeDiff.deleted.length,
-        },
-      };
-
-      if (args.includeEntities) {
-        result["added"] = diff.treeDiff.added.map((e) => ({ key: e.key }));
-        result["modified"] = diff.treeDiff.modified.map((e) => ({ key: e.key }));
-        result["deleted"] = diff.treeDiff.deleted.map((e) => ({ key: e.key }));
-      }
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
-    } catch (error) {
-      log.e("HISTORY", "diff_commits_failed", { error: (error as Error).message });
-      return errorResult(`Failed to diff commits: ${(error as Error).message}`);
-    }
+        return result;
+      },
+      "diff_commits",
+    );
   }
 }
 
@@ -162,60 +158,38 @@ export class CheckoutCommitToolHandler extends BaseToolHandler<z.infer<typeof Ch
   }
 
   protected async execute(args: z.infer<typeof CheckoutCommitSchema>): Promise<ToolResult> {
-    const storage = (await this.ensureGraphStorageForProject(args.projectPath)) as GraphStorageLibSQL;
-    const adapter = storage.getLibSQLAdapter?.();
+    return withTimeTravel(
+      this,
+      args.projectPath,
+      async (timeTravel, commitManager) => {
+        const commit = await commitManager!.getCommit(args.commitHash);
+        if (!commit) throw new Error(`Commit not found: ${args.commitHash}`);
 
-    if (!adapter?.getProllyNodeStore || !adapter?.getCommitManager) {
-      return errorResult("Prolly Tree not available - ensure project is indexed");
-    }
+        const result: Record<string, unknown> = {
+          commit: {
+            hash: commit.commitHash,
+            message: commit.message,
+            entityCount: 0,
+            relationshipCount: 0,
+            createdAt: new Date(commit.createdAt).toISOString(),
+            parentHash: commit.parentHash,
+          },
+        };
 
-    const nodeStore = adapter.getProllyNodeStore();
-    const commitManager = adapter.getCommitManager();
+        if (args.entityId) {
+          result["entity"] = await timeTravel.getEntityAt(args.entityId, args.commitHash);
+        }
 
-    if (!nodeStore || !commitManager) {
-      return errorResult("Prolly Tree components not initialized");
-    }
+        if (args.query) {
+          const entities = await timeTravel.searchEntitiesAt(args.commitHash, args.query, args.limit);
+          result["entities"] = entities.slice(args.offset, args.offset + args.limit);
+          result["totalMatches"] = entities.length;
+        }
 
-    const timeTravel = new TimeTravelManager(nodeStore, commitManager);
-
-    try {
-      // Get commit info
-      const commit = await commitManager.getCommit(args.commitHash);
-      if (!commit) {
-        return errorResult(`Commit not found: ${args.commitHash}`);
-      }
-
-      const result: Record<string, unknown> = {
-        commit: {
-          hash: commit.commitHash,
-          message: commit.message,
-          entityCount: 0,
-          relationshipCount: 0,
-          createdAt: new Date(commit.createdAt).toISOString(),
-          parentHash: commit.parentHash,
-        },
-      };
-
-      // If specific entity requested
-      if (args.entityId) {
-        const entity = await timeTravel.getEntityAt(args.entityId, args.commitHash);
-        result["entity"] = entity;
-      }
-
-      // If query provided, search entities at that commit
-      if (args.query) {
-        const entities = await timeTravel.searchEntitiesAt(args.commitHash, args.query, args.limit);
-        result["entities"] = entities.slice(args.offset, args.offset + args.limit);
-        result["totalMatches"] = entities.length;
-      }
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
-    } catch (error) {
-      log.e("HISTORY", "checkout_commit_failed", { error: (error as Error).message });
-      return errorResult(`Failed to checkout commit: ${(error as Error).message}`);
-    }
+        return result;
+      },
+      "checkout_commit",
+    );
   }
 }
 
@@ -229,47 +203,24 @@ export class ListCommitsToolHandler extends BaseToolHandler<z.infer<typeof ListC
   }
 
   protected async execute(args: z.infer<typeof ListCommitsSchema>): Promise<ToolResult> {
-    const storage = (await this.ensureGraphStorageForProject(args.projectPath)) as GraphStorageLibSQL;
-    const adapter = storage.getLibSQLAdapter?.();
-
-    if (!adapter?.getCommitManager) {
-      return errorResult("Prolly Tree not available - ensure project is indexed");
-    }
-
-    const commitManager = adapter.getCommitManager();
-
-    if (!commitManager) {
-      return errorResult("Prolly Tree components not initialized");
-    }
-
-    try {
-      const history = await commitManager.getHistory(args.limit);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                commits: history.map((c) => ({
-                  hash: c.commitHash,
-                  message: c.message,
-                  entityCount: 0,
-                  relationshipCount: 0,
-                  createdAt: new Date(c.createdAt).toISOString(),
-                  parentHash: c.parentHash?.slice(0, 8) || null,
-                })),
-                total: history.length,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    } catch (error) {
-      log.e("HISTORY", "list_commits_failed", { error: (error as Error).message });
-      return errorResult(`Failed to list commits: ${(error as Error).message}`);
-    }
+    return withTimeTravel(
+      this,
+      args.projectPath,
+      async (_timeTravel, commitManager) => {
+        const history = await commitManager!.getHistory(args.limit);
+        return {
+          commits: history.map((c) => ({
+            hash: c.commitHash,
+            message: c.message,
+            entityCount: 0,
+            relationshipCount: 0,
+            createdAt: new Date(c.createdAt).toISOString(),
+            parentHash: c.parentHash?.slice(0, 8) || null,
+          })),
+          total: history.length,
+        };
+      },
+      "list_commits",
+    );
   }
 }
