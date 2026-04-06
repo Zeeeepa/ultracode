@@ -140,6 +140,8 @@ function pickStr(yamlVal: string | undefined, envName: string, fallback: string 
 export class ConfigLoader {
   private static instance: ConfigLoader;
   private static overridePath: string | undefined;
+  /** Guard against reentrant getInstance during constructor (sync-safe). */
+  private static creating = false;
   private config: AppConfig;
   private configPath: string;
 
@@ -149,15 +151,29 @@ export class ConfigLoader {
   }
 
   /**
-   * Get singleton instance
+   * Get singleton instance.
+   * Thread-safe for single-threaded JS: all I/O is synchronous,
+   * so no async interleaving is possible during construction.
    */
   public static getInstance(): ConfigLoader {
     if (!ConfigLoader.instance) {
-      ConfigLoader.instance = new ConfigLoader();
+      if (ConfigLoader.creating) {
+        throw new Error("ConfigLoader: reentrant getInstance() during construction");
+      }
+      ConfigLoader.creating = true;
+      try {
+        ConfigLoader.instance = new ConfigLoader();
+      } finally {
+        ConfigLoader.creating = false;
+      }
     }
     return ConfigLoader.instance;
   }
 
+  /**
+   * Set override config path and reload if instance exists.
+   * Sync-safe: both resolveConfigPath() and loadConfiguration() use sync I/O.
+   */
   public static setOverridePath(path?: string): void {
     ConfigLoader.overridePath = path ? resolve(process.cwd(), path) : undefined;
     if (ConfigLoader.instance) {

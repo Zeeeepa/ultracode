@@ -152,6 +152,11 @@ export class GitWatcher {
   private debounceMs: number;
   /** Bulk mode threshold */
   private bulkModeThreshold: number;
+  /** Flush retry: abort controller for canceling pending retry when forceFlush is called */
+  private flushRetryAbort: AbortController | null = null;
+  /** Max retry attempts for deferred flush (prevents infinite retry chain) */
+  private static readonly MAX_FLUSH_RETRIES = 15; // 15 × 2s = 30s max wait
+  private flushRetryCount = 0;
 
   private branchChangeCallbacks: BranchChangeCallback[] = [];
   private commitCallbacks: CommitCallback[] = [];
@@ -274,6 +279,13 @@ export class GitWatcher {
       this.debounceAbortController = null;
     }
 
+    // Abort pending flush retry
+    if (this.flushRetryAbort) {
+      this.flushRetryAbort.abort();
+      this.flushRetryAbort = null;
+    }
+    this.flushRetryCount = 0;
+
     this.lastUncommittedFiles.clear();
     this.pendingChanges.clear();
     log.i("GITWATCHER", "stopped");
@@ -384,22 +396,59 @@ export class GitWatcher {
       this.debounceAbortController.abort();
       this.debounceAbortController = null;
     }
+    // Cancel any pending deferred retry so forceFlush doesn't double-flush
+    if (this.flushRetryAbort) {
+      this.flushRetryAbort.abort();
+      this.flushRetryAbort = null;
+    }
+    this.flushRetryCount = 0;
     this.flushPendingChanges();
   }
 
   /**
-   * Flush accumulated pending changes and trigger debounced callbacks
+   * Flush accumulated pending changes and trigger debounced callbacks.
+   *
+   * When timers are suspended (heavy analysis running), retries up to
+   * MAX_FLUSH_RETRIES times with 2s delay. Beyond that, drops pending
+   * changes to prevent unbounded memory growth.
    */
   private flushPendingChanges(): void {
     if (this.pendingChanges.size === 0) return;
 
     // Defer if heavy analysis is running (prevents bun:sqlite concurrent access crash)
     if (areTimersSuspended()) {
-      log.d("GITWATCHER", "flush_deferred_suspended", { pending: this.pendingChanges.size });
-      // Async retry — no setTimeout handle (Bun-safe)
-      sleep(2000).then(() => this.flushPendingChanges());
+      this.flushRetryCount++;
+      if (this.flushRetryCount > GitWatcher.MAX_FLUSH_RETRIES) {
+        log.w("GITWATCHER", "flush_retry_exhausted", {
+          pending: this.pendingChanges.size,
+          retries: this.flushRetryCount,
+          action: "dropping_pending_changes",
+        });
+        this.pendingChanges.clear();
+        this.flushRetryCount = 0;
+        this.flushRetryAbort = null;
+        return;
+      }
+      log.d("GITWATCHER", "flush_deferred_suspended", {
+        pending: this.pendingChanges.size,
+        retry: this.flushRetryCount,
+        maxRetries: GitWatcher.MAX_FLUSH_RETRIES,
+      });
+      // Cancellable async retry — aborted by forceFlush() or stopWatching()
+      const abort = new AbortController();
+      this.flushRetryAbort = abort;
+      sleep(2000).then(() => {
+        if (!abort.signal.aborted) {
+          this.flushRetryAbort = null;
+          this.flushPendingChanges();
+        }
+      });
       return;
     }
+
+    // Reset retry counter on successful flush
+    this.flushRetryCount = 0;
+    this.flushRetryAbort = null;
 
     const files = Array.from(this.pendingChanges);
     const bulkMode = files.length >= this.bulkModeThreshold;

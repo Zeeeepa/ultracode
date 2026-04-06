@@ -113,6 +113,8 @@ export class EmbeddingAccumulator {
   private debounceAbort: AbortController | null = null;
   private static readonly DEBOUNCE_MS = 10; // Minimal debounce — texts arrive in bursts from workers
   private static readonly MIN_BATCH_THRESHOLD = 16; // Start immediately with small batches
+  // Guard: only one scheduleQueueProcessing IIFE in-flight at a time
+  private scheduleInFlight = false;
 
   // Stats
   private stats: AccumulatorStats = {
@@ -322,10 +324,13 @@ export class EmbeddingAccumulator {
   /**
    * Schedule queue processing with debounce (Bun-compatible using async sleep).
    * Waits for more texts to accumulate before starting, unless queue is already large.
+   *
+   * Race-safety: guards prevent double-scheduling even if called from multiple
+   * async contexts within the same event loop tick.
    */
   private scheduleQueueProcessing(): void {
     // If already scheduled or processing, skip
-    if (this.debounceAbort || this.isProcessingQueue) return;
+    if (this.debounceAbort || this.isProcessingQueue || this.scheduleInFlight) return;
 
     // If queue is large enough, start immediately
     if (this.textQueue.length >= EmbeddingAccumulator.MIN_BATCH_THRESHOLD) {
@@ -346,18 +351,23 @@ export class EmbeddingAccumulator {
     // Create abort controller for this debounce
     const abortController = new AbortController();
     this.debounceAbort = abortController;
+    this.scheduleInFlight = true;
 
     // Schedule using async sleep pattern (Bun compatible)
     (async () => {
-      await sleep(EmbeddingAccumulator.DEBOUNCE_MS);
-      if (!abortController.signal.aborted) {
-        this.debounceAbort = null;
-        if (!this.isProcessingQueue && this.textQueue.length > 0) {
-          log.d("ACCUMULATOR", "Debounce complete, starting processing", {
-            queueSize: this.textQueue.length,
-          });
-          this.startQueueProcessing();
+      try {
+        await sleep(EmbeddingAccumulator.DEBOUNCE_MS);
+        if (!abortController.signal.aborted) {
+          this.debounceAbort = null;
+          if (!this.isProcessingQueue && this.textQueue.length > 0) {
+            log.d("ACCUMULATOR", "Debounce complete, starting processing", {
+              queueSize: this.textQueue.length,
+            });
+            this.startQueueProcessing();
+          }
         }
+      } finally {
+        this.scheduleInFlight = false;
       }
     })();
   }
@@ -374,12 +384,6 @@ export class EmbeddingAccumulator {
     this.queueProcessingPromise = this.processQueueLoop();
   }
 
-  // PARALLEL_BATCHES removed — now configurable via config.parallelBatches
-
-  /**
-   * Process a single batch and return results.
-   * Used for parallel batch processing.
-   */
   /**
    * Fast text hash (FNV-1a 32-bit). Same text → same hash.
    * Used for content-level dedup and embedding cache.

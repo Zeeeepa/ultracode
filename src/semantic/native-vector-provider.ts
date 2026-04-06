@@ -19,6 +19,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { log } from "../logging/index.js";
+import { DbWriteMutex } from "../storage/db-write-mutex.js";
 import type { SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 import { HashFilter } from "./hash-filter.js";
 import { type IvfConfig, IvfIndex } from "./ivf-index.js";
@@ -70,6 +71,11 @@ export class NativeVectorProvider {
   // Auto-save tracking
   private unsavedCount = 0;
   private isInitialized = false;
+
+  // Mutex: prevents concurrent save() calls from corrupting index files.
+  // save() does async I/O (bruteForce.save, ivf.save, writeFile) — without
+  // serialization, maybeAutoSave() fire-and-forget can race with explicit save().
+  private readonly saveMutex = new DbWriteMutex("vec-save");
 
   constructor(config: NativeVectorProviderConfig) {
     this.config = {
@@ -224,25 +230,33 @@ export class NativeVectorProvider {
     return saved;
   }
 
-  /** Save index to disk. */
+  /**
+   * Save index to disk. Serialized through saveMutex to prevent concurrent
+   * writes (maybeAutoSave fire-and-forget + explicit save/flush/close).
+   */
   async save(): Promise<void> {
     if (!this.config.persistDir) return;
 
-    const vectorsPath = join(this.config.persistDir, VECTORS_FILENAME);
-    await this.bruteForce.save(vectorsPath);
+    await this.saveMutex.run(async () => {
+      // Re-check inside mutex — another save may have already flushed
+      if (this.unsavedCount === 0) return;
 
-    if (this.ivf?.trained) {
-      const ivfPath = join(this.config.persistDir, IVF_FILENAME);
-      await this.ivf.save(ivfPath);
-    }
+      const vectorsPath = join(this.config.persistDir, VECTORS_FILENAME);
+      await this.bruteForce.save(vectorsPath);
 
-    // Save content cache
-    const cachePath = join(this.config.persistDir, "content-cache.json");
-    const cacheObj = Object.fromEntries(this.contentCache);
-    await writeFile(cachePath, JSON.stringify(cacheObj));
+      if (this.ivf?.trained) {
+        const ivfPath = join(this.config.persistDir, IVF_FILENAME);
+        await this.ivf.save(ivfPath);
+      }
 
-    this.unsavedCount = 0;
-    log.d("NATIVE_VEC", `Saved ${this.bruteForce.count()} vectors`);
+      // Save content cache
+      const cachePath = join(this.config.persistDir, "content-cache.json");
+      const cacheObj = Object.fromEntries(this.contentCache);
+      await writeFile(cachePath, JSON.stringify(cacheObj));
+
+      this.unsavedCount = 0;
+      log.d("NATIVE_VEC", `Saved ${this.bruteForce.count()} vectors`);
+    });
   }
 
   /** Close and cleanup. */
@@ -334,6 +348,8 @@ export class NativeVectorProvider {
 
   private maybeAutoSave(): void {
     if (this.unsavedCount >= this.config.autoSaveThreshold) {
+      // Skip if a save is already queued/running — avoid piling up save calls
+      if (this.saveMutex.queueDepth > 0) return;
       this.save().catch((err) => log.w("NATIVE_VEC", "Auto-save failed", { error: (err as Error).message }));
     }
   }
