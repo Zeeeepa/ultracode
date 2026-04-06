@@ -548,6 +548,13 @@ export async function performAutoIndex(
           log.w("INDEXER", "storage_flush_fail", { err: (error as Error).message });
         }
 
+        // 4.5. Build trigram index for grep_index tool
+        try {
+          await buildTrigramIndex(postIndexDir);
+        } catch (error) {
+          log.w("INDEXER", "trigram_build_fail", { err: (error as Error).message });
+        }
+
         // 5. Publish index:completed and AWAIT all subscribers (PMI, AutoDoc, etc.)
         // This ensures heavy tools (detect_patterns) don't start while subscribers are busy
         await knowledgeBus.publishAsync(
@@ -600,4 +607,70 @@ export async function performAutoIndex(
     embeddingPerformance: resultEmbeddingPerf,
     oversizedWarning: resultOversizedWarning,
   };
+}
+
+// =============================================================================
+// TRIGRAM INDEX BUILDER
+// =============================================================================
+
+/**
+ * Build trigram index from all indexed files for grep_index tool.
+ * Reads files from disk, extracts trigrams, writes binary index.
+ */
+async function buildTrigramIndex(projectDir: string): Promise<void> {
+  const start = Date.now();
+  const { TrigramBuilder } = await import("../search/trigram-index.js");
+  const { extractTrigrams } = await import("../search/trigram-extract.js");
+  const { getPerProjectMultiDbPaths, getProjectHash } = await import("../shared/storage-paths.js");
+  const { readFileSync, mkdirSync, existsSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+  const fg = await import("fast-glob");
+
+  const projectHash = getProjectHash(projectDir);
+  const { baseDir } = getPerProjectMultiDbPaths(projectHash);
+  const outputPath = resolve(baseDir, "trigrams.idx");
+
+  // Scan source files (same extensions as parser supports)
+  const patterns = [
+    "**/*.{ts,tsx,js,jsx,mjs,cjs}",
+    "**/*.{py,pyi}",
+    "**/*.{cs,csx}",
+    "**/*.{java,kt,kts}",
+    "**/*.{go,rs,zig}",
+    "**/*.{c,h,cpp,hpp,cc,hh,cxx,hxx}",
+    "**/*.{swift}",
+    "**/*.{sh,bash,zsh}",
+    "**/*.{sql,graphql,gql}",
+    "**/*.{json,yaml,yml,toml}",
+  ];
+  const ignore = [
+    "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**",
+    "**/.git/**", "**/vendor/**", "**/target/**", "**/__pycache__/**",
+    "**/coverage/**", "**/.next/**", "**/.nuxt/**",
+  ];
+
+  const files = await fg.glob(patterns, { cwd: projectDir, ignore, absolute: true });
+
+  const builder = new TrigramBuilder();
+  let indexed = 0;
+  for (const filePath of files) {
+    try {
+      const content = readFileSync(filePath);
+      if (content.length === 0 || content.length > 1_000_000) continue; // skip empty/huge
+      const trigrams = extractTrigrams(content);
+      if (trigrams.entries.length === 0) continue;
+      // Use relative path for portability
+      const relPath = filePath.replace(projectDir, "").replace(/^[\\/]/, "").replace(/\\/g, "/");
+      builder.addFile(relPath, BigInt(content.length), trigrams);
+      indexed++;
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  if (indexed > 0) {
+    if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
+    builder.build(outputPath);
+    log.i("INDEXER", "trigram_built", { files: indexed, path: outputPath, ms: Date.now() - start });
+  }
 }

@@ -36,63 +36,63 @@ export class GrepIndexToolHandler extends BaseToolHandler<z.infer<typeof GrepInd
     const resolvedPath = this.resolveProjectPath(args);
 
     try {
-      // Try trigram index first
+      // Try trigram index — first in per-project data dir, then in project root
       const { TrigramIndex } = await import("../../search/trigram-index.js");
+      const { getPerProjectMultiDbPaths, getProjectHash } = await import("../../shared/storage-paths.js");
       const { join } = await import("node:path");
-      const indexPath = join(resolvedPath, ".ultracode", "trigrams.idx");
-      const index = TrigramIndex.open(indexPath);
 
-      if (index && !args.is_regex) {
-        // Trigram-accelerated search
-        const matches = index.executeSearch(resolvedPath, args.pattern, {
-          maxResults: args.max_results,
-          contextLines: args.context_lines,
-          caseInsensitive: args.case_insensitive,
-          ...(args.file_pattern ? { filePattern: args.file_pattern } : {}),
-        });
+      const projectHash = getProjectHash(resolvedPath);
+      const { baseDir } = getPerProjectMultiDbPaths(projectHash);
+      const perProjectPath = join(baseDir, "trigrams.idx");
+      const legacyPath = join(resolvedPath, ".ultracode", "trigrams.idx");
 
+      const index = TrigramIndex.open(perProjectPath) ?? TrigramIndex.open(legacyPath);
+
+      if (!index) {
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(
-                {
-                  matches: matches.map((m) => ({
-                    file: m.filePath,
-                    line: m.lineNumber,
-                    column: m.column,
-                    content: m.lineContent,
-                    context_before: m.contextBefore,
-                    context_after: m.contextAfter,
-                  })),
-                  total: matches.length,
-                  source: "trigram_index",
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify({
+                error: "Trigram index not found",
+                message: "Run 'index' tool first to build the trigram index.",
+                hint: `Looked in: ${perProjectPath}`,
+              }),
             },
           ],
         };
       }
 
-      // Fallback: ripgrep-style search via child_process
-      const { execSync } = await import("node:child_process");
-      const rgArgs = [args.pattern];
-      if (args.case_insensitive) rgArgs.push("-i");
-      if (args.file_pattern) rgArgs.push("--glob", args.file_pattern);
-      rgArgs.push("-n", "--max-count", String(args.max_results));
-      if (args.context_lines > 0) rgArgs.push("-C", String(args.context_lines));
-
-      const output = execSync(`rg ${rgArgs.map((a) => `"${a}"`).join(" ")}`, {
-        cwd: resolvedPath,
-        encoding: "utf-8",
-        timeout: 10000,
-        stdio: ["pipe", "pipe", "pipe"],
+      // Trigram-accelerated search (supports both plain text and regex)
+      const matches = index.executeSearch(resolvedPath, args.pattern, {
+        maxResults: args.max_results,
+        contextLines: args.context_lines,
+        caseInsensitive: args.case_insensitive,
+        ...(args.file_pattern ? { filePattern: args.file_pattern } : {}),
       });
 
       return {
-        content: [{ type: "text", text: output.slice(0, 50000) }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                matches: matches.map((m) => ({
+                  file: m.filePath,
+                  line: m.lineNumber,
+                  column: m.column,
+                  content: m.lineContent,
+                  context_before: m.contextBefore,
+                  context_after: m.contextAfter,
+                })),
+                total: matches.length,
+                source: "trigram_index",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     } catch (err) {
       return {
@@ -102,7 +102,7 @@ export class GrepIndexToolHandler extends BaseToolHandler<z.infer<typeof GrepInd
             text: JSON.stringify({
               error: "Search failed",
               message: (err as Error).message,
-              hint: "Index may not be built yet. Run 'index' first.",
+              hint: "Trigram index may not be built. Run 'index' first.",
             }),
           },
         ],
