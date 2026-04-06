@@ -666,27 +666,20 @@ export class SwiftNativeParser {
   }
 
   /**
-   * Extract function calls, control flow, and data flow from function bodies
+   * Collect @State/@Published property names per class for data flow detection.
+   * Returns Map<className, Set<simplePropertyName>>.
    */
-  private extractCallsAndDataFlow(
-    content: string,
-    _filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    // Collect state property names per class for data flow detection
-    // Key: class name, Value: set of SIMPLE property names (for matching self.propName in body)
+  private collectStateProperties(entities: ParsedEntity[]): Map<string, Set<string>> {
     const statePropsPerClass = new Map<string, Set<string>>();
     for (const entity of entities) {
       const meta = entity.metadata as Record<string, unknown> | undefined;
       if (entity.type === "property" && meta?.["isState"] && entity.id) {
-        // Entity ID format: "FilePath:state:ClassName.propName" or "FilePath:property:ClassName.propName"
         const idParts = entity.id.split(":");
         const fullName = idParts[idParts.length - 1]; // "ClassName.propName"
         const dotIndex = fullName?.lastIndexOf(".");
         if (dotIndex && dotIndex > 0) {
           const className = fullName!.substring(0, dotIndex);
-          const simplePropName = fullName!.substring(dotIndex + 1); // Extract simple name for body matching
+          const simplePropName = fullName!.substring(dotIndex + 1);
           if (!statePropsPerClass.has(className)) {
             statePropsPerClass.set(className, new Set());
           }
@@ -694,8 +687,114 @@ export class SwiftNativeParser {
         }
       }
     }
+    return statePropsPerClass;
+  }
 
-    // Find all functions/methods with their bodies
+  /**
+   * Find the entity matching a function name at approximately the given line.
+   * Handles qualified names (ClassName.methodName) and init methods.
+   */
+  private findFunctionEntity(entities: ParsedEntity[], funcName: string, funcLine: number): ParsedEntity | undefined {
+    return entities.find(
+      (e) =>
+        (e.type === "function" || e.type === "method" || e.type === "async_function") &&
+        (e.name === funcName || e.name.endsWith(`.${funcName}`) || (funcName === "init" && e.name.endsWith(".init"))) &&
+        Math.abs(e.location.start.line - funcLine) <= 5,
+    );
+  }
+
+  /**
+   * Build call relationships from extracted calls.
+   * Creates local (same file) or cross-module relationships.
+   */
+  private buildCallRelationships(
+    calls: Array<{ name: string; target?: string; argumentCount: number; isAwait?: boolean; isOptional?: boolean }>,
+    funcEntity: ParsedEntity,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
+    for (const call of calls) {
+      const qualifiedCallName = call.target
+        ? `${call.target.charAt(0).toUpperCase() + call.target.slice(1)}.${call.name}`
+        : call.name;
+
+      const targetEntity = entities.find(
+        (e) =>
+          (e.type === "function" || e.type === "method" || e.type === "async_function") &&
+          (e.name === qualifiedCallName || e.name === call.name || e.name.endsWith(`.${call.name}`)),
+      );
+
+      if (targetEntity) {
+        relationships.push({
+          from: funcEntity.name,
+          to: targetEntity.name,
+          type: "calls",
+          metadata: {
+            line: funcEntity.location.start.line,
+            calledName: call.name,
+            ...(call.target && { target: call.target }),
+            ...(call.isAwait && { isAsync: true }),
+          },
+        });
+      } else {
+        relationships.push({
+          from: funcEntity.name,
+          to: qualifiedCallName,
+          type: "calls",
+          metadata: {
+            line: funcEntity.location.start.line,
+            calledName: call.name,
+            ...(call.target && { target: call.target }),
+            ...(call.isAwait && { isAsync: true }),
+            crossModule: true,
+            ...(call.target && {
+              targetClass: call.target.charAt(0).toUpperCase() + call.target.slice(1),
+            }),
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Build depends_on relationships for state reads/writes (used by trace_data_flow).
+   */
+  private buildStateFlowRelationships(
+    dataFlow: { stateReads: string[]; stateModifications: string[] },
+    funcEntity: ParsedEntity,
+    relationships: EntityRelationship[],
+  ): void {
+    for (const stateRead of dataFlow.stateReads) {
+      relationships.push({
+        from: funcEntity.name,
+        to: stateRead,
+        type: "depends_on",
+        metadata: { line: funcEntity.location.start.line, accessType: "read", isState: true },
+      });
+    }
+    for (const stateMod of dataFlow.stateModifications) {
+      relationships.push({
+        from: funcEntity.name,
+        to: stateMod,
+        type: "depends_on",
+        metadata: { line: funcEntity.location.start.line, accessType: "write", isState: true },
+      });
+    }
+  }
+
+  /**
+   * Extract function calls, control flow, and data flow from function bodies.
+   * Orchestrates helpers: collectStateProperties, findFunctionEntity,
+   * buildCallRelationships, buildStateFlowRelationships.
+   */
+  private extractCallsAndDataFlow(
+    content: string,
+    _filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
+    const statePropsPerClass = this.collectStateProperties(entities);
+
     this.resetRegex(FUNC_WITH_BODY_RE);
 
     let funcMatch: RegExpExecArray | null;
@@ -703,149 +802,61 @@ export class SwiftNativeParser {
     let functionsWithCalls = 0;
     while ((funcMatch = FUNC_WITH_BODY_RE.exec(content))) {
       const funcName = funcMatch[1] || "init";
-      const bodyStartIndex = funcMatch.index + funcMatch[0].length - 1; // Position of '{'
+      const bodyStartIndex = funcMatch.index + funcMatch[0].length - 1;
       const funcLine = content.slice(0, funcMatch.index).split("\n").length;
 
-      // Extract the function body
       const body = this.extractBraceBlock(content, bodyStartIndex);
       if (!body) continue;
 
-      // Find which entity this function belongs to - match by name AND approximate line number
-      // This handles multiple functions with same name in different classes
-      // Entity names are now qualified (ClassName.methodName), so match both exact and suffix
-      const funcEntity = entities.find(
-        (e) =>
-          (e.type === "function" || e.type === "method" || e.type === "async_function") &&
-          (e.name === funcName ||
-            e.name.endsWith(`.${funcName}`) ||
-            (funcName === "init" && e.name.endsWith(".init"))) &&
-          Math.abs(e.location.start.line - funcLine) <= 5, // Allow small line number variance
-      );
-
+      const funcEntity = this.findFunctionEntity(entities, funcName, funcLine);
       if (!funcEntity || !funcEntity.id) {
-        // DEBUG: Log when entity not found
         log.d("SWIFT", "func_entity_not_found", { funcName, funcLine, entitiesCount: entities.length });
         continue;
       }
 
       functionsProcessed++;
 
-      // Determine parent class from entity ID (format: "FilePath:type:ClassName.methodName")
+      // Determine parent class for state property lookup
       const idParts = funcEntity.id.split(":");
-      const fullName = idParts[idParts.length - 1]; // "ClassName.methodName"
+      const fullName = idParts[idParts.length - 1];
       const dotIndex = fullName?.indexOf(".");
       const parentClass = dotIndex && dotIndex > 0 ? fullName!.substring(0, dotIndex) : null;
       const classStateProps = parentClass ? statePropsPerClass.get(parentClass) : undefined;
 
-      // Extract calls from the body
       const calls = this.extractCallsFromBody(body);
-
-      // Extract control flow
       const controlFlow = this.extractControlFlowFromBody(body);
-
-      // Extract data flow (state reads and modifications) - pass state property names
       const dataFlow = this.extractDataFlowFromBody(body, classStateProps);
 
-      // Add calls to entity
+      // Attach calls to entity + build relationships
       if (calls.length > 0) {
         functionsWithCalls++;
         funcEntity.calls = calls.map((c) => ({
           name: c.name,
           ...(c.target && { target: c.target }),
-          location: {
-            start: { line: 0, column: 0, index: 0 },
-            end: { line: 0, column: 0, index: 0 },
-          },
+          location: { start: { line: 0, column: 0, index: 0 }, end: { line: 0, column: 0, index: 0 } },
           argumentCount: c.argumentCount,
           ...(c.isAwait && { isAwait: true }),
           ...(c.isOptional && { isOptional: true }),
         }));
-
-        // Create 'calls' relationships
-        for (const call of calls) {
-          // Build qualified call name: TargetClass.methodName or just methodName
-          const qualifiedCallName = call.target
-            ? `${call.target.charAt(0).toUpperCase() + call.target.slice(1)}.${call.name}`
-            : call.name;
-
-          // Try to find the target entity in current file by qualified name
-          const targetEntity = entities.find(
-            (e) =>
-              (e.type === "function" || e.type === "method" || e.type === "async_function") &&
-              (e.name === qualifiedCallName || e.name === call.name || e.name.endsWith(`.${call.name}`)),
-          );
-
-          if (targetEntity) {
-            // Local call within same file - use entity NAME (not id) for indexer resolution
-            relationships.push({
-              from: funcEntity.name,
-              to: targetEntity.name,
-              type: "calls",
-              metadata: {
-                line: funcEntity.location.start.line,
-                calledName: call.name,
-                ...(call.target && { target: call.target }),
-                ...(call.isAwait && { isAsync: true }),
-              },
-            });
-          } else {
-            // External/cross-module call - use qualified name (ClassName.methodName)
-            // The indexer will add external: prefix if entity is not found
-            relationships.push({
-              from: funcEntity.name,
-              to: qualifiedCallName, // Just the name, e.g., "ServerPoster.postMobileConnect"
-              type: "calls",
-              metadata: {
-                line: funcEntity.location.start.line,
-                calledName: call.name,
-                ...(call.target && { target: call.target }),
-                ...(call.isAwait && { isAsync: true }),
-                crossModule: true,
-                ...(call.target && {
-                  targetClass: call.target.charAt(0).toUpperCase() + call.target.slice(1),
-                }),
-              },
-            });
-          }
-        }
+        this.buildCallRelationships(calls, funcEntity, entities, relationships);
       }
 
-      // Add control flow to entity
+      // Attach control flow
       if (controlFlow.branches.length > 0 || controlFlow.loops.length > 0 || controlFlow.exceptions.length > 0) {
         funcEntity.controlFlow = controlFlow;
       }
 
-      // Add data flow to entity metadata
+      // Attach data flow + state relationships
       if (dataFlow.stateReads.length > 0 || dataFlow.stateModifications.length > 0) {
         funcEntity.metadata = {
           ...funcEntity.metadata,
           stateReads: dataFlow.stateReads,
           stateModifications: dataFlow.stateModifications,
         };
-
-        // Create relationships for state dependencies
-        // Create depends_on relationships for state dependencies (used by trace_data_flow)
-        for (const stateRead of dataFlow.stateReads) {
-          relationships.push({
-            from: funcEntity.name,
-            to: stateRead,
-            type: "depends_on",
-            metadata: { line: funcEntity.location.start.line, accessType: "read", isState: true },
-          });
-        }
-
-        for (const stateMod of dataFlow.stateModifications) {
-          relationships.push({
-            from: funcEntity.name,
-            to: stateMod,
-            type: "depends_on",
-            metadata: { line: funcEntity.location.start.line, accessType: "write", isState: true },
-          });
-        }
+        this.buildStateFlowRelationships(dataFlow, funcEntity, relationships);
       }
     }
 
-    // Log summary of call extraction
     if (functionsProcessed > 0 || functionsWithCalls > 0) {
       const callsRels = relationships.filter((r) => r.type === "calls").length;
       log.i("SWIFT", "extractCallsAndDataFlow_done", {
