@@ -430,10 +430,31 @@ export const SANITIZER_PATTERNS: SanitizerPattern[] = [
   },
 ];
 
-/**
- * Check if entity code matches source patterns
- */
+// ===========================================================================
+// Pre-compiled combined regex for each category.
+// Single .test() per category instead of iterating 20-30 individual patterns.
+// Reduces 89 regex.test() calls per entity → 3 (one per category).
+// Individual pattern matching only runs on entities that pass the combined test.
+// ===========================================================================
+
+function buildCombinedRegex(patterns: Array<{ pattern: RegExp }>): RegExp {
+  const sources = patterns.map((p) => p.pattern.source);
+  return new RegExp(sources.join("|"), "i");
+}
+
+const SOURCE_COMBINED_RE = buildCombinedRegex(SOURCE_PATTERNS);
+const SINK_COMBINED_RE = buildCombinedRegex(SINK_PATTERNS);
+const SANITIZER_COMBINED_RE = buildCombinedRegex(SANITIZER_PATTERNS);
+
+/** Pre-screen: matches ANY taint-relevant pattern (source | sink | sanitizer) */
+const PRE_SCREEN_RE = buildCombinedRegex([...SOURCE_PATTERNS, ...SINK_PATTERNS, ...SANITIZER_PATTERNS]);
+
+export function hasTaintRelevance(code: string): boolean {
+  return PRE_SCREEN_RE.test(code);
+}
+
 export function classifyAsSource(code: string): { type: string; description: string; priority: number } | null {
+  if (!SOURCE_COMBINED_RE.test(code)) return null;
   for (const pat of SOURCE_PATTERNS) {
     if (pat.pattern.test(code)) {
       return { type: pat.type, description: pat.description, priority: pat.priority };
@@ -442,12 +463,10 @@ export function classifyAsSource(code: string): { type: string; description: str
   return null;
 }
 
-/**
- * Check if entity code matches sink patterns
- */
 export function classifyAsSink(
   code: string,
 ): { type: string; categories: TaintCategory[]; description: string; priority: number } | null {
+  if (!SINK_COMBINED_RE.test(code)) return null;
   for (const pat of SINK_PATTERNS) {
     if (pat.pattern.test(code)) {
       return { type: pat.type, categories: pat.categories, description: pat.description, priority: pat.priority };
@@ -456,12 +475,10 @@ export function classifyAsSink(
   return null;
 }
 
-/**
- * Check if entity code matches sanitizer patterns
- */
 export function classifyAsSanitizer(
   code: string,
 ): { type: string; protectsAgainst: TaintCategory[]; description: string } | null {
+  if (!SANITIZER_COMBINED_RE.test(code)) return null;
   for (const pat of SANITIZER_PATTERNS) {
     if (pat.pattern.test(code)) {
       return { type: pat.type, protectsAgainst: pat.protectsAgainst, description: pat.description };

@@ -3,7 +3,7 @@ import { log } from "../../logging/index.js";
 import type { GraphEdgeAttributes, GraphNodeAttributes } from "../../tracing/graphology-path-builder.js";
 import { GraphologyPathBuilder, TRACING_EDGE_TYPES } from "../../tracing/graphology-path-builder.js";
 import type { Entity, GraphStorage } from "../../types/storage.js";
-import { classifyAsSanitizer, classifyAsSink, classifyAsSource } from "./catalogs.js";
+import { classifyAsSanitizer, classifyAsSink, classifyAsSource, hasTaintRelevance } from "./catalogs.js";
 import type {
   TaintAnalysisParams,
   TaintAnalysisResult,
@@ -52,8 +52,10 @@ export class TaintFlowAnalyzer {
     const startTime = performance.now();
 
     // Load only tracing-relevant edge types — cuts 463K → ~70K relationships (SQL-level filter)
+    log.i("TAINT", "phase_start", { phase: "loadGraph" });
     await this.pathBuilder.loadGraph(TRACING_EDGE_TYPES);
-
+    log.i("TAINT", "phase_done", { phase: "loadGraph", ms: Math.round(performance.now() - startTime) });
+    log.i("TAINT", "phase_start", { phase: "getAllEntities" });
     let allEntities = entitiesCache.get(this.storage);
     if (!allEntities) {
       allEntities = await this.storage.getAllEntities();
@@ -62,9 +64,44 @@ export class TaintFlowAnalyzer {
     const entities = params.includeTests
       ? allEntities
       : allEntities.filter((e) => !TEST_FILE_PATTERNS.test(e.filePath));
+    log.i("TAINT", "phase_done", {
+      phase: "getAllEntities",
+      count: entities.length,
+      ms: Math.round(performance.now() - startTime),
+    });
 
-    // Discover sources, sinks, sanitizers (with metadata cache)
-    const { sources, sinks, sanitizers, cachedCount, newlyClassified } = this.discoverAll(entities);
+    // Process discovery in small test batches to isolate crash
+    log.i("TAINT", "phase_start", { phase: "discovery", entities: entities.length });
+    const sources: TaintSource[] = [];
+    const sinks: TaintSink[] = [];
+    const sanitizers: TaintSanitizer[] = [];
+    let cachedCount = 0;
+    const newlyClassified = new Set<string>();
+
+    // Process 100 entities at a time, log progress after each batch
+    const CHUNK = 100;
+    for (let start = 0; start < entities.length; start += CHUNK) {
+      const chunk = entities.slice(start, Math.min(start + CHUNK, entities.length));
+      try {
+        const partial = this.discoverAll(chunk);
+        sources.push(...partial.sources);
+        sinks.push(...partial.sinks);
+        sanitizers.push(...partial.sanitizers);
+        cachedCount += partial.cachedCount;
+        for (const id of partial.newlyClassified) newlyClassified.add(id);
+      } catch (err) {
+        log.e("TAINT", "discovery_chunk_error", { start, end: start + chunk.length, err: (err as Error).message });
+      }
+      if (start % 1000 === 0) {
+        log.i("TAINT", "discovery_progress", {
+          idx: start,
+          total: entities.length,
+          sources: sources.length,
+          sinks: sinks.length,
+        });
+      }
+    }
+    log.i("TAINT", "phase_done", { phase: "discovery", ms: Math.round(performance.now() - startTime) });
 
     log.i("TAINT", "discovery_complete", {
       sources: sources.length,
@@ -96,8 +133,17 @@ export class TaintFlowAnalyzer {
     const maxDepth = params.maxDepth ?? 15;
     const graph = this.pathBuilder.getGraph();
 
+    log.i("TAINT", "bfs_start", {
+      sources: limitedSources.length,
+      sinks: limitedSinks.length,
+      maxDepth,
+      graphNodes: graph.order,
+      graphEdges: graph.size,
+    });
+
     let reachedLimit = false;
     let timeoutReached = false;
+    let bfsCount = 0;
 
     for (const source of limitedSources) {
       if (reachedLimit) break;
@@ -105,6 +151,12 @@ export class TaintFlowAnalyzer {
         timeoutReached = true;
         reachedLimit = true;
         break;
+      }
+
+      // Yield every 10 sources to prevent GC pressure
+      bfsCount++;
+      if (bfsCount % 10 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
       }
 
       // Phase 1: One BFS from source — O(reachable_nodes)
@@ -339,7 +391,12 @@ export class TaintFlowAnalyzer {
     const newlyClassified = new Set<string>();
     let cachedCount = 0;
 
-    for (const entity of entities) {
+    for (let idx = 0; idx < entities.length; idx++) {
+      const entity = entities[idx]!;
+
+      // Skip entities with no useful data for taint classification
+      if (!entity.name && !entity.metadata) continue;
+
       // Phase 4: Check metadata cache first
       const cached = entity.metadata?.["taintRole"] as
         | {
@@ -417,10 +474,11 @@ export class TaintFlowAnalyzer {
         }
       }
 
-      // Fallback: regex classification
-      const code = (entity.metadata?.signature as string | undefined) ?? entity.name;
+      // Regex classification with pre-screen filter (1 regex instead of 89 for non-matching entities)
+      const rawCode = (entity.metadata?.signature as string | undefined) ?? entity.name;
+      if (!rawCode || rawCode.length > 1024 || !hasTaintRelevance(rawCode)) continue;
 
-      const sourceClass = classifyAsSource(code);
+      const sourceClass = classifyAsSource(rawCode);
       if (sourceClass) {
         newlyClassified.add(entity.id);
         sources.push({
@@ -435,7 +493,7 @@ export class TaintFlowAnalyzer {
         continue;
       }
 
-      const sinkClass = classifyAsSink(code);
+      const sinkClass = classifyAsSink(rawCode);
       if (sinkClass) {
         newlyClassified.add(entity.id);
         sinks.push({
@@ -450,7 +508,7 @@ export class TaintFlowAnalyzer {
         continue;
       }
 
-      const sanClass = classifyAsSanitizer(code);
+      const sanClass = classifyAsSanitizer(rawCode);
       if (sanClass) {
         newlyClassified.add(entity.id);
         sanitizers.push({

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { log } from "../../logging/index.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 
@@ -29,6 +30,8 @@ export class TaintAnalysisToolHandler extends BaseToolHandler<z.infer<typeof Tai
   }
 
   protected async execute(args: z.infer<typeof TaintAnalysisSchema>): Promise<ToolResult> {
+    log.i("TAINT", "handler_start", { category: args.category, maxDepth: args.maxDepth });
+
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
     const { TaintFlowAnalyzer } = await import("../../analysis/taint/index.js");
@@ -41,6 +44,7 @@ export class TaintAnalysisToolHandler extends BaseToolHandler<z.infer<typeof Tai
       maxDepth: args.maxDepth,
       includeTests: args.includeTests,
     });
+    log.i("TAINT", "handler_analyze_done");
 
     const summary = TaintFormatter.toSummary(result);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
