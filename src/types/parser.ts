@@ -408,6 +408,21 @@ export interface ParsedEntity {
       }
     | undefined;
 
+  closureHints?:
+    | {
+        innerFunctionCount: number;
+        capturedVarCount: number;
+        fullObjectCaptureCount: number;
+        evalInClosureCount: number;
+        addListenerCount: number;
+        removeListenerCount: number;
+        mapNewCount: number;
+        weakMapNewCount: number;
+        setNewCount: number;
+        weakSetNewCount: number;
+      }
+    | undefined;
+
   pythonHints?:
     | {
         bareExceptCount: number;

@@ -188,6 +188,7 @@ patterns:
       entityTypes: ["method", "function", "async_function"]
       hasLoops: true
       callsInclude: ["subscribe"]
+    customDetector: "checkRxjsSubscribeInLoop"
     exemplarIds: ["ts:rxjs-subscribe-loop:bad1"]
     minSemanticSimilarity: 0.65
     minStructuralConfidence: 0.5
@@ -845,3 +846,75 @@ patterns:
     customDetector: "checkCircularDependency"
     minSemanticSimilarity: 0
     minStructuralConfidence: 0.7
+
+  # ─── Closure Memory Leak Patterns ────────────────────────────
+
+  - id: "ts:closure-full-object-capture"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Closure Captures Entire Object"
+    description: "Closure captures the whole object but only accesses a property — prevents GC of the entire object"
+    suggestion: "Destructure or copy needed properties before creating the closure: const {id} = data; return () => id"
+    tags: ["memory", "closure", "gc"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkClosureFullObjectCapture"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:closure-eval-scope-leak"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "eval() in Closure Captures Entire Scope"
+    description: "eval() inside a closure forces the JS engine to retain ALL outer variables — massive memory leak risk"
+    suggestion: "Remove eval() entirely. Use JSON.parse(), Function constructor, or Map-based dispatch"
+    tags: ["memory", "closure", "eval", "gc"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkClosureEvalScopeLeak"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "ts:map-instead-of-weakmap"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Map Instead of WeakMap for Object References"
+    description: "Using Map to cache/associate data with objects in closure — strong references prevent garbage collection"
+    suggestion: "Use WeakMap for object-keyed caches: const cache = new WeakMap() — entries are GC'd when key object is unreachable"
+    tags: ["memory", "gc", "collection"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkMapInsteadOfWeakMap"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:set-instead-of-weakset"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Set Instead of WeakSet for Object Tracking"
+    description: "Using Set to track processed objects in closure — strong references prevent garbage collection"
+    suggestion: "Use WeakSet for object tracking: const seen = new WeakSet() — entries are GC'd when object is unreachable"
+    tags: ["memory", "gc", "collection"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkSetInsteadOfWeakSet"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:closure-no-cleanup"
+    category: "code-smell"
+    severity: "medium"
+    name: "Closure Holds Large Data Without Cleanup"
+    description: "Closure captures variables from outer scope that are never nulled — data stays in memory for closure lifetime"
+    suggestion: "Set captured references to null after use: bigData = null inside the callback"
+    tags: ["memory", "closure", "gc"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkClosureNoCleanup"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5

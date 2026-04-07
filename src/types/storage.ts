@@ -389,6 +389,7 @@ export function parsedEntityToEntity(
     metrics: complexityMeta,
     ...(parsed.jitHints && { jitHints: parsed.jitHints }),
     ...(parsed.antipatternHints && { antipatternHints: parsed.antipatternHints }),
+    ...(parsed.closureHints && { closureHints: parsed.closureHints }),
     ...(parsed.pythonHints && { pythonHints: parsed.pythonHints }),
   };
 

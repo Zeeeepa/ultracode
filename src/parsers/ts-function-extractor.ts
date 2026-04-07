@@ -15,6 +15,7 @@ import {
   extractTypeReferences,
   type TypeReference,
 } from "./ts-call-extractor.js";
+import { extractClosureHints } from "./ts-closure-hints-extractor.js";
 import { extractComplexity } from "./ts-complexity-analyzer.js";
 import { extractControlFlow } from "./ts-control-flow-extractor.js";
 import { extractDocumentation } from "./ts-doc-extractor.js";
@@ -124,6 +125,7 @@ export function extractFunctionDeclaration(node: ts.FunctionDeclaration, ctx: Fu
   const complexity = extractComplexity(node, sourceFile);
   const jitHints = extractJitHints(node, sourceFile);
   const antipatternHints = extractAntipatternHints(node, sourceFile);
+  const closureHints = extractClosureHints(node, sourceFile);
 
   entities.push({
     name: functionName,
@@ -141,6 +143,7 @@ export function extractFunctionDeclaration(node: ts.FunctionDeclaration, ctx: Fu
     complexity,
     ...(jitHints && { jitHints }),
     ...(antipatternHints && { antipatternHints }),
+    ...(closureHints && { closureHints }),
   });
 
   if (calls.length > 0) {
@@ -173,6 +176,7 @@ export function extractArrowFunctionOrExpression(node: ts.VariableStatement, ctx
       const complexity = extractComplexity(decl.initializer, sourceFile);
       const jitHints = extractJitHints(decl.initializer, sourceFile);
       const antipatternHints = extractAntipatternHints(decl.initializer, sourceFile);
+      const closureHints = extractClosureHints(decl.initializer, sourceFile);
 
       entities.push({
         name,
@@ -189,6 +193,7 @@ export function extractArrowFunctionOrExpression(node: ts.VariableStatement, ctx
         complexity,
         ...(jitHints && { jitHints }),
         ...(antipatternHints && { antipatternHints }),
+        ...(closureHints && { closureHints }),
       });
 
       if (calls.length > 0) {

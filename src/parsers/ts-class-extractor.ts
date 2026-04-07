@@ -16,6 +16,7 @@ import {
   extractTypeReferences,
   type TypeReference,
 } from "./ts-call-extractor.js";
+import { extractClosureHints } from "./ts-closure-hints-extractor.js";
 import { extractComplexity } from "./ts-complexity-analyzer.js";
 import { extractControlFlow } from "./ts-control-flow-extractor.js";
 import { extractDocumentation } from "./ts-doc-extractor.js";
@@ -255,6 +256,7 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
   const methodComplexity = extractComplexity(member, sourceFile);
   const methodJitHints = extractJitHints(member, sourceFile);
   const methodAntipatternHints = extractAntipatternHints(member, sourceFile);
+  const methodClosureHints = extractClosureHints(member, sourceFile);
   const methodLocation = getLocation(sourceFile, member);
   const methodDecorators = getDecorators(member, sourceFile);
 
@@ -277,6 +279,7 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
     complexity: methodComplexity,
     ...(methodJitHints && { jitHints: methodJitHints }),
     ...(methodAntipatternHints && { antipatternHints: methodAntipatternHints }),
+    ...(methodClosureHints && { closureHints: methodClosureHints }),
     metadata:
       ngrxStoreUsage.dispatches.length > 0 || ngrxStoreUsage.selects.length > 0
         ? {
@@ -463,6 +466,7 @@ function extractConstructor(member: ts.ConstructorDeclaration, ctx: MemberContex
   const constructorTypeRefs = extractTypeReferences(member, sourceFile);
   const constructorComplexity = extractComplexity(member, sourceFile);
   const constructorAntipatternHints = extractAntipatternHints(member, sourceFile);
+  const constructorClosureHints = extractClosureHints(member, sourceFile);
   const constructorLocation = getLocation(sourceFile, member);
 
   classEntity.children!.push({
@@ -478,6 +482,7 @@ function extractConstructor(member: ts.ConstructorDeclaration, ctx: MemberContex
     typeReferences: constructorTypeRefs,
     complexity: constructorComplexity,
     ...(constructorAntipatternHints && { antipatternHints: constructorAntipatternHints }),
+    ...(constructorClosureHints && { closureHints: constructorClosureHints }),
   });
 
   ctx.addMemberRelationships("constructor", constructorLocation, constructorCalls);

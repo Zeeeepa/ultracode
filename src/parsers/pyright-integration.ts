@@ -205,8 +205,10 @@ export async function runPyrightAnalysis(
   const resultPromise = new Promise<PyrightOutput | null>((resolve) => {
     proc.on("close", (_code: number | null) => {
       abortController.abort();
+      const raw = stdout;
+      stdout = ""; // release buffer — can be large for big projects
       try {
-        const output = JSON.parse(stdout);
+        const output = JSON.parse(raw);
         resolve(output as PyrightOutput);
       } catch (e) {
         log.w("PYRIGHT", "parse_fail", { err: String(e) });

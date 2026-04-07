@@ -278,9 +278,20 @@ export function checkQuadraticArrayOps(entity: Entity): CustomDetectorResult {
 
 /**
  * TS-020: Event listener leak — addEventListener without removeEventListener
+ * Enhanced: higher confidence when closure captures outer scope data.
+ *
+ * Excludes bounded-lifetime objects where listeners die with the object:
+ * - Child processes (spawn/exec/fork + aliases like spawnProcess) — die on exit
+ * - File streams (createReadStream/createWriteStream + aliases) — die on EOF
+ * - HTTP responses (httpsGet, http.get, http.request) — die on response end
+ * - Workers (new Worker()) — die on worker termination
  */
+const BOUNDED_LIFETIME_CALLS = /[Ss]pawn|[Ee]xec(?:File)?|[Ff]ork|[Cc]reate(Read|Write)Stream|^https?Get$|^Worker$/;
+const HTTP_METHOD_NAME = /^(get|request)$/;
+const HTTP_TARGET = /^(https?|nodeHttps?|http|res|response)$/i;
+
 export function checkEventListenerLeak(entity: Entity): CustomDetectorResult {
-  const calls = entity.metadata?.["calls"] as Array<{ name?: string }> | undefined;
+  const calls = entity.metadata?.["calls"] as Array<{ name?: string; target?: string }> | undefined;
   if (!calls) return { match: false, confidence: 0 };
 
   const callNames = calls.map((c) => c.name ?? "");
@@ -289,10 +300,22 @@ export function checkEventListenerLeak(entity: Entity): CustomDetectorResult {
 
   if (!hasAdd || hasRemove) return { match: false, confidence: 0 };
 
+  // Bounded-lifetime: child processes, file streams, workers
+  if (callNames.some((n) => BOUNDED_LIFETIME_CALLS.test(n))) return { match: false, confidence: 0 };
+
+  // HTTP methods on http/https modules: nodeHttps.get(), http.request(), etc.
+  if (calls.some((c) => HTTP_METHOD_NAME.test(c.name ?? "") && HTTP_TARGET.test(c.target ?? ""))) {
+    return { match: false, confidence: 0 };
+  }
+
+  // Check closureHints — if inner function captures data, the leak is more severe
+  const ch = getClosureHints(entity);
+  const hasCapturedData = ch != null && (ch.capturedVarCount ?? 0) > 0;
+
   return {
     match: true,
-    confidence: 0.65,
-    matchedCriteria: ["listener-no-cleanup"],
+    confidence: hasCapturedData ? 0.85 : 0.65,
+    matchedCriteria: ["listener-no-cleanup", ...(hasCapturedData ? ["closure-captures-data"] : [])],
   };
 }
 
@@ -611,6 +634,30 @@ export function checkStringlyTypedApi(entity: Entity): CustomDetectorResult {
 }
 
 /**
+ * RxJS subscribe in loop — only fires when the entity actually uses RxJS.
+ * Without RxJS signals (pipe, Observable, Subject, etc.), `subscribe()` is just
+ * an EventEmitter/KnowledgeBus method — not a leak-prone RxJS subscription.
+ */
+const RXJS_SIGNALS =
+  /^(pipe|Observable|Subject|BehaviorSubject|ReplaySubject|AsyncSubject|switchMap|mergeMap|concatMap|exhaustMap|takeUntil|combineLatest|forkJoin|of|from|firstValueFrom|lastValueFrom|toObservable|asObservable)$/;
+
+export function checkRxjsSubscribeInLoop(entity: Entity): CustomDetectorResult {
+  const calls = entity.metadata?.["calls"] as Array<{ name?: string }> | undefined;
+  if (!calls) return { match: false, confidence: 0 };
+
+  const callNames = calls.map((c) => c.name ?? "");
+
+  // Must actually use RxJS — not just any .subscribe()
+  if (!callNames.some((n) => RXJS_SIGNALS.test(n))) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.75,
+    matchedCriteria: ["subscribe-in-loop", "rxjs-context"],
+  };
+}
+
+/**
  * TS-015: Await in loop — sequential async where parallel is possible
  */
 export function checkAwaitInLoop(entity: Entity): CustomDetectorResult {
@@ -867,6 +914,190 @@ export function checkCircularDependency(entity: Entity, allEntities?: Entity[]):
     confidence: 0.8,
     matchedCriteria: [`mutual-import-with=${importedSource}`],
   };
+}
+
+// ─── Closure Memory Leak Detectors ─────────────────────────────────
+
+type ClosureHintsLike = {
+  innerFunctionCount?: number;
+  capturedVarCount?: number;
+  fullObjectCaptureCount?: number;
+  evalInClosureCount?: number;
+  addListenerCount?: number;
+  removeListenerCount?: number;
+  mapNewCount?: number;
+  weakMapNewCount?: number;
+  setNewCount?: number;
+  weakSetNewCount?: number;
+};
+
+function getClosureHints(entity: Entity): ClosureHintsLike | null {
+  return (entity.metadata?.["closureHints"] as ClosureHintsLike) ?? null;
+}
+
+/**
+ * True when closures are attached to genuinely long-lived listeners.
+ * Excludes bounded-lifetime objects (child processes, file streams, HTTP, workers)
+ * where listeners die with the object — same exclusion as checkEventListenerLeak.
+ */
+function hasLongLivedListeners(entity: Entity, ch: ClosureHintsLike): boolean {
+  if ((ch.addListenerCount ?? 0) === 0 || (ch.removeListenerCount ?? 0) > 0) return false;
+
+  const calls = entity.metadata?.["calls"] as Array<{ name?: string; target?: string }> | undefined;
+  if (!calls) return true; // can't determine — assume long-lived
+
+  const callNames = calls.map((c) => c.name ?? "");
+  if (callNames.some((n) => BOUNDED_LIFETIME_CALLS.test(n))) return false;
+  if (calls.some((c) => HTTP_METHOD_NAME.test(c.name ?? "") && HTTP_TARGET.test(c.target ?? ""))) return false;
+
+  return true;
+}
+
+/**
+ * Closure captures entire object when only a property is used.
+ * Pattern: function handler(data) { return () => data.id; }
+ * Fix: const {id} = data; return () => id;
+ *
+ * Only flags long-lived closures (event listeners / subscriptions).
+ * Sync closures and Promise-bounded async closures die with their scope — no GC risk.
+ */
+export function checkClosureFullObjectCapture(entity: Entity): CustomDetectorResult {
+  const ch = getClosureHints(entity);
+  if (!ch || !ch.fullObjectCaptureCount || ch.fullObjectCaptureCount === 0) {
+    return { match: false, confidence: 0 };
+  }
+
+  // Only flag when closures are attached to long-lived event sources
+  // Sync visitors, Promise.all lambdas, .map() callbacks — all short-lived, no GC risk
+  if (!hasLongLivedListeners(entity, ch)) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: Math.min(0.7 + ch.fullObjectCaptureCount * 0.05, 0.9),
+    matchedCriteria: [
+      `full-object-captures=${ch.fullObjectCaptureCount}`,
+      `captured-vars=${ch.capturedVarCount ?? 0}`,
+      "has-listeners",
+    ],
+  };
+}
+
+/**
+ * eval() inside closure forces engine to retain ALL outer scope variables.
+ * Pattern: function outer(x, y, bigData) { return () => eval("x + 1"); }
+ * The engine retains x, y, AND bigData — even though eval only uses x.
+ */
+export function checkClosureEvalScopeLeak(entity: Entity): CustomDetectorResult {
+  const ch = getClosureHints(entity);
+  if (!ch || !ch.evalInClosureCount || ch.evalInClosureCount === 0) {
+    return { match: false, confidence: 0 };
+  }
+
+  // eval in closure is always dangerous — high confidence
+  return {
+    match: true,
+    confidence: 0.95,
+    matchedCriteria: [`eval-in-closure=${ch.evalInClosureCount}`, `inner-functions=${ch.innerFunctionCount ?? 0}`],
+  };
+}
+
+/**
+ * Map used instead of WeakMap for object references in long-lived closure context.
+ * Pattern: function cache() { const m = new Map(); return (obj) => m.set(obj, compute(obj)); }
+ * Fix: use new WeakMap() — entries are GC'd when key becomes unreachable.
+ *
+ * Only flags when Map is captured in a long-lived closure (event listeners).
+ * Most Maps use string/number keys where WeakMap is impossible — we can't
+ * distinguish key types statically, so require strong long-lived signal.
+ */
+export function checkMapInsteadOfWeakMap(entity: Entity): CustomDetectorResult {
+  const ch = getClosureHints(entity);
+  if (!ch) return { match: false, confidence: 0 };
+
+  const mapCount = ch.mapNewCount ?? 0;
+  const hasWeakMap = (ch.weakMapNewCount ?? 0) > 0;
+  const hasInnerFn = (ch.innerFunctionCount ?? 0) > 0;
+
+  if (mapCount === 0 || hasWeakMap || !hasInnerFn) return { match: false, confidence: 0 };
+
+  // Without long-lived closures (listeners), the Map is GC'd with the scope.
+  // Most Maps use string keys where WeakMap is impossible anyway.
+  if (!hasLongLivedListeners(entity, ch)) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: mapCount >= 3 ? 0.75 : 0.65,
+    matchedCriteria: [`new-Map=${mapCount}`, "no-WeakMap", "has-listeners", "long-lived-closure"],
+  };
+}
+
+/**
+ * Set used instead of WeakSet for tracking objects in long-lived closure context.
+ * Pattern: function tracker() { const s = new Set(); return (obj) => { s.add(obj); }; }
+ * Fix: use new WeakSet() — entries are GC'd when object becomes unreachable.
+ *
+ * Same rationale as Map/WeakMap: most Sets store primitives, and without
+ * long-lived closures the Set is GC'd with the scope anyway.
+ */
+export function checkSetInsteadOfWeakSet(entity: Entity): CustomDetectorResult {
+  const ch = getClosureHints(entity);
+  if (!ch) return { match: false, confidence: 0 };
+
+  const setCount = ch.setNewCount ?? 0;
+  const hasWeakSet = (ch.weakSetNewCount ?? 0) > 0;
+  const hasInnerFn = (ch.innerFunctionCount ?? 0) > 0;
+
+  if (setCount === 0 || hasWeakSet || !hasInnerFn) return { match: false, confidence: 0 };
+
+  if (!hasLongLivedListeners(entity, ch)) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.6,
+    matchedCriteria: [`new-Set=${setCount}`, "no-WeakSet", "has-listeners", "long-lived-closure"],
+  };
+}
+
+/**
+ * Closure captures variables that are never cleaned up (nulled).
+ * Pattern: function setup(bigData) { btn.addEventListener('click', () => console.log(bigData.length)); }
+ * Fix: bigData = null after use inside the handler.
+ *
+ * Heuristic: flags when captured var count is high relative to inner function count,
+ * and the function deals with event listeners (higher risk of long-lived closures).
+ */
+export function checkClosureNoCleanup(entity: Entity): CustomDetectorResult {
+  const ch = getClosureHints(entity);
+  if (!ch || !ch.capturedVarCount || ch.capturedVarCount === 0) {
+    return { match: false, confidence: 0 };
+  }
+
+  const hasInnerFn = (ch.innerFunctionCount ?? 0) > 0;
+  if (!hasInnerFn) return { match: false, confidence: 0 };
+
+  const capturedVars = ch.capturedVarCount;
+
+  // Only flag closures attached to long-lived event sources.
+  // Sync visitors, .map() lambdas, Promise-bounded callbacks — all short-lived.
+  if (!hasLongLivedListeners(entity, ch)) return { match: false, confidence: 0 };
+
+  if (capturedVars >= 5) {
+    return {
+      match: true,
+      confidence: 0.8,
+      matchedCriteria: [`captured-vars=${capturedVars}`, "has-listeners", "long-lived-closure", "heavy-capture"],
+    };
+  }
+
+  if (capturedVars >= 3) {
+    return {
+      match: true,
+      confidence: 0.7,
+      matchedCriteria: [`captured-vars=${capturedVars}`, "has-listeners", "long-lived-closure"],
+    };
+  }
+
+  return { match: false, confidence: 0 };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────

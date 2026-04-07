@@ -548,13 +548,17 @@ export async function parseWithJavaParser(filePath: string, content: string): Pr
   const resultPromise = new Promise<JavaParseResult>((resolve) => {
     proc.on("close", (_code: number | null) => {
       abortController.abort();
+      const rawOut = stdout;
+      const rawErr = stderr;
+      stdout = ""; // release buffers — can be large for big Java files
+      stderr = "";
       try {
-        const result = JSON.parse(stdout);
+        const result = JSON.parse(rawOut);
         resolve(result as JavaParseResult);
       } catch {
         resolve({
           entities: [],
-          errors: [{ message: `Parse error: ${stderr || stdout}` }],
+          errors: [{ message: `Parse error: ${rawErr || rawOut}` }],
         });
       }
     });

@@ -14,6 +14,9 @@ interface IndexingState {
 /** Per-project indexing state tracking */
 const indexingProjects = new Map<string, IndexingState>();
 
+/** Safety timeout: auto-clear stuck indexing locks after 5 minutes */
+const INDEXING_TIMEOUT_MS = 5 * 60 * 1000;
+
 /** Post-indexing background work (embedding generation, FAISS save, etc.) */
 const postIndexingPromises = new Map<string, { promise: Promise<void>; startTime: number }>();
 
@@ -50,9 +53,29 @@ export function resumeTimers(): void {
 }
 
 /**
+ * Evict stale indexing locks that exceeded the safety timeout.
+ * Protects against zombie locks when indexing crashes or the tool call is cancelled.
+ */
+function evictStaleLocks(): void {
+  const now = Date.now();
+  for (const [key, state] of indexingProjects) {
+    if (now - state.startTime > INDEXING_TIMEOUT_MS) {
+      indexingProjects.delete(key);
+      if (legacyIndexingDirectory === key) {
+        legacyIndexingDirectory = null;
+      }
+    }
+  }
+  if (indexingProjects.size === 0) {
+    resumeTimers();
+  }
+}
+
+/**
  * Check if indexing is currently in progress for ANY project
  */
 export function isIndexing(): boolean {
+  evictStaleLocks();
   return indexingProjects.size > 0;
 }
 
@@ -60,6 +83,7 @@ export function isIndexing(): boolean {
  * Check if a specific project is being indexed
  */
 export function isProjectIndexing(directory: string): boolean {
+  evictStaleLocks();
   const normalizedDir = directory.toLowerCase().replace(/\\/g, "/");
   for (const [key] of indexingProjects) {
     if (key.toLowerCase().replace(/\\/g, "/") === normalizedDir) {
@@ -78,6 +102,7 @@ export function getIndexingStatus(): {
   elapsedSeconds: number | null;
   allProjects: string[];
 } {
+  evictStaleLocks();
   if (indexingProjects.size === 0) {
     return { inProgress: false, directory: null, elapsedSeconds: null, allProjects: [] };
   }
