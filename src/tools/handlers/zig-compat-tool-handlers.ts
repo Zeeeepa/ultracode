@@ -68,6 +68,7 @@ export class GrepIndexToolHandler extends BaseToolHandler<z.infer<typeof GrepInd
         maxResults: args.max_results,
         contextLines: args.context_lines,
         caseInsensitive: args.case_insensitive,
+        isRegex: args.is_regex,
         ...(args.file_pattern ? { filePattern: args.file_pattern } : {}),
       });
 

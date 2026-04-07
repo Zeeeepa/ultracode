@@ -25,6 +25,25 @@ import {
 } from "./trigram-types.js";
 import { decodeDelta, encodeDelta, maxEncodedSize } from "./varint.js";
 
+/**
+ * Extract literal alphanumeric substrings (≥3 chars) from a regex pattern.
+ * Used for trigram candidate filtering: "for\s*\(.*await" → "for await"
+ * Returns concatenated literals joined by space, or empty string if none found.
+ */
+function extractRegexLiterals(pattern: string, caseInsensitive?: boolean): string {
+  // Match runs of word characters (letters, digits, underscore) that are 3+ chars
+  const literals: string[] = [];
+  const re = /[a-zA-Z_]\w{2,}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(pattern)) !== null) {
+    // Skip common regex keywords that aren't literals
+    if (m[0] === "true" || m[0] === "false" || m[0] === "null" || m[0] === "undefined") continue;
+    literals.push(m[0]);
+  }
+  const result = literals.join(" ");
+  return caseInsensitive ? result.toLowerCase() : result;
+}
+
 // =============================================================================
 // Builder
 // =============================================================================
@@ -276,23 +295,52 @@ export class TrigramIndex {
     const maxResults = options.maxResults ?? 100;
     const contextLines = options.contextLines ?? 2;
 
-    // Step 1: Decompose pattern into trigrams
-    const queryTrigrams = decomposePattern(options.caseInsensitive ? pattern.toLowerCase() : pattern);
-    if (queryTrigrams.length === 0) return [];
+    // Step 1: Decompose pattern into trigrams for candidate filtering
+    // For regex mode: extract only literal alphanumeric runs (≥3 chars) from the pattern
+    // e.g. "for\s*\(.*await" → literals "for", "await" → trigrams from those
+    const trigramSource = options.isRegex
+      ? extractRegexLiterals(pattern, options.caseInsensitive)
+      : options.caseInsensitive
+        ? pattern.toLowerCase()
+        : pattern;
+    const queryTrigrams = trigramSource ? decomposePattern(trigramSource) : [];
 
-    // Step 2: Look up each trigram, get posting lists
-    const postingLists: number[][] = [];
-    for (const tri of queryTrigrams) {
-      const entry = this.lookupTrigram(tri);
-      if (!entry) return []; // Trigram not in index → no results
-      postingLists.push(this.readPostingList(entry));
-    }
+    let candidates: number[];
 
-    // Step 3: Intersect posting lists (all trigrams must be present in file)
-    let candidates = postingLists[0]!;
-    for (let i = 1; i < postingLists.length; i++) {
-      candidates = intersectSorted(candidates, postingLists[i]!);
-      if (candidates.length === 0) return [];
+    if (queryTrigrams.length === 0) {
+      // No trigrams available (short pattern or pure regex metacharacters)
+      // Fall back to scanning all indexed files
+      candidates = [];
+      for (let i = 0; i < this.header.fileCount; i++) {
+        candidates.push(i);
+      }
+    } else {
+      // Step 2: Look up each trigram, get posting lists
+      const postingLists: number[][] = [];
+      for (const tri of queryTrigrams) {
+        const entry = this.lookupTrigram(tri);
+        if (!entry) {
+          // Trigram not in index
+          if (!options.isRegex) return []; // Plain text: no possible match
+          continue; // Regex: skip this trigram, try others
+        }
+        postingLists.push(this.readPostingList(entry));
+      }
+
+      if (postingLists.length === 0) {
+        // No trigrams found — scan all files
+        candidates = [];
+        for (let i = 0; i < this.header.fileCount; i++) {
+          candidates.push(i);
+        }
+      } else {
+        // Step 3: Intersect posting lists (all trigrams must be present in file)
+        candidates = postingLists[0]!;
+        for (let i = 1; i < postingLists.length; i++) {
+          candidates = intersectSorted(candidates, postingLists[i]!);
+          if (candidates.length === 0) return [];
+        }
+      }
     }
 
     // Step 4: Verify matches by reading actual files
@@ -308,47 +356,79 @@ export class TrigramIndex {
 
       try {
         const content = readFs(fullPath, "utf-8");
-        const searchContent = options.caseInsensitive ? content.toLowerCase() : content;
-        const searchPattern = options.caseInsensitive ? pattern.toLowerCase() : pattern;
+        const allLines = content.split("\n");
 
-        let pos = 0;
-        while (pos < searchContent.length && matches.length < maxResults) {
-          const idx = searchContent.indexOf(searchPattern, pos);
-          if (idx === -1) break;
+        if (options.isRegex) {
+          // Regex mode: compile pattern and match against full file content (supports multiline)
+          const flags = options.caseInsensitive ? "gis" : "gs";
+          const re = new RegExp(pattern, flags);
+          let m: RegExpExecArray | null;
+          while ((m = re.exec(content)) !== null && matches.length < maxResults) {
+            const idx = m.index;
+            const beforeMatch = content.slice(0, idx);
+            const lineNumber = beforeMatch.split("\n").length;
+            const lineIdx = lineNumber - 1;
+            const column = idx - (beforeMatch.lastIndexOf("\n") + 1) + 1;
 
-          // Find line number and column
-          const lines = content.slice(0, idx).split("\n");
-          const lineNumber = lines.length;
-          const column = (lines[lines.length - 1]?.length ?? 0) + 1;
+            const ctxBefore: string[] = [];
+            const ctxAfter: string[] = [];
+            for (let c = Math.max(0, lineIdx - contextLines); c < lineIdx; c++) {
+              ctxBefore.push(allLines[c] ?? "");
+            }
+            for (let c = lineIdx + 1; c <= Math.min(allLines.length - 1, lineIdx + contextLines); c++) {
+              ctxAfter.push(allLines[c] ?? "");
+            }
 
-          // Get the full line
-          const allLines = content.split("\n");
-          const lineIdx = lineNumber - 1;
-          const lineContent = allLines[lineIdx] ?? "";
+            matches.push({
+              filePath,
+              lineNumber,
+              column,
+              lineContent: allLines[lineIdx] ?? "",
+              contextBefore: ctxBefore,
+              contextAfter: ctxAfter,
+            });
 
-          // Context lines
-          const ctxBefore: string[] = [];
-          const ctxAfter: string[] = [];
-          for (let c = Math.max(0, lineIdx - contextLines); c < lineIdx; c++) {
-            ctxBefore.push(allLines[c] ?? "");
+            // Prevent infinite loop on zero-length matches
+            if (m[0].length === 0) re.lastIndex++;
           }
-          for (let c = lineIdx + 1; c <= Math.min(allLines.length - 1, lineIdx + contextLines); c++) {
-            ctxAfter.push(allLines[c] ?? "");
+        } else {
+          // Plain text mode: indexOf search (original behavior)
+          const searchContent = options.caseInsensitive ? content.toLowerCase() : content;
+          const searchPattern = options.caseInsensitive ? pattern.toLowerCase() : pattern;
+
+          let pos = 0;
+          while (pos < searchContent.length && matches.length < maxResults) {
+            const idx = searchContent.indexOf(searchPattern, pos);
+            if (idx === -1) break;
+
+            const lines = content.slice(0, idx).split("\n");
+            const lineNumber = lines.length;
+            const column = (lines[lines.length - 1]?.length ?? 0) + 1;
+            const lineIdx = lineNumber - 1;
+
+            const ctxBefore: string[] = [];
+            const ctxAfter: string[] = [];
+            for (let c = Math.max(0, lineIdx - contextLines); c < lineIdx; c++) {
+              ctxBefore.push(allLines[c] ?? "");
+            }
+            for (let c = lineIdx + 1; c <= Math.min(allLines.length - 1, lineIdx + contextLines); c++) {
+              ctxAfter.push(allLines[c] ?? "");
+            }
+
+            matches.push({
+              filePath,
+              lineNumber,
+              column,
+              lineContent: allLines[lineIdx] ?? "",
+              contextBefore: ctxBefore,
+              contextAfter: ctxAfter,
+            });
+
+            pos = idx + 1;
           }
-
-          matches.push({
-            filePath,
-            lineNumber,
-            column,
-            lineContent,
-            contextBefore: ctxBefore,
-            contextAfter: ctxAfter,
-          });
-
-          pos = idx + 1;
         }
       } catch {
-        // File not readable — skip
+        // File not readable or invalid regex — skip
       }
     }
 

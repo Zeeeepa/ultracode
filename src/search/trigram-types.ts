@@ -71,6 +71,7 @@ export interface SearchOptions {
   contextLines?: number;
   filePattern?: string;
   caseInsensitive?: boolean;
+  isRegex?: boolean;
 }
 
 export interface SearchMatch {
