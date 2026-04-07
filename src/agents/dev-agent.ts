@@ -1536,70 +1536,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     // Post-indexing: Cross-domain linking (swagger, protobuf, graphql, db schema)
-    // Load entities once and check which linkers are needed
-    perfTimings["swaggerLink_start"] = Date.now() - perfStart;
-    try {
-      const { resolveSwaggerLinks, resolveProtobufLinks, resolveGraphQLLinks, resolveDbSchemaLinks } = await import(
-        "./dev/indexing-pipeline.js"
-      );
-      const graphStorage = await (await import("../storage/graph-storage-factory.js")).getGraphStorage();
-      const allEntities = await graphStorage.getAllEntities();
-
-      const hasSwagger = allEntities.some((e) => e.metadata?.["swaggerType"]);
-      const hasProtobuf = allEntities.some((e) => e.metadata?.["protoType"]);
-      const hasGraphQL = allEntities.some((e) => e.metadata?.["graphqlType"]);
-      const hasDbEntities = allEntities.some((e) => e.metadata?.["isDbSchema"] || e.metadata?.["dbType"]);
-
-      log.i("DEVAGENT", "cross_domain_check", { hasSwagger, hasProtobuf, hasGraphQL, hasDbEntities });
-
-      if (hasSwagger) {
-        const swaggerRels = await resolveSwaggerLinks(allEntities);
-        if (swaggerRels > 0) {
-          totalRelationships += swaggerRels;
-          log.i("DEVAGENT", "swagger_links_created", { count: swaggerRels });
-        }
-      }
-      perfTimings["swaggerLink_end"] = Date.now() - perfStart;
-
-      perfTimings["protobufLink_start"] = Date.now() - perfStart;
-      if (hasProtobuf) {
-        const protoRels = await resolveProtobufLinks(allEntities);
-        if (protoRels > 0) {
-          totalRelationships += protoRels;
-          log.i("DEVAGENT", "protobuf_links_created", { count: protoRels });
-        }
-      }
-      perfTimings["protobufLink_end"] = Date.now() - perfStart;
-
-      perfTimings["graphqlLink_start"] = Date.now() - perfStart;
-      if (hasGraphQL) {
-        const graphqlRels = await resolveGraphQLLinks(allEntities);
-        if (graphqlRels > 0) {
-          totalRelationships += graphqlRels;
-          log.i("DEVAGENT", "graphql_links_created", { count: graphqlRels });
-        }
-      }
-      perfTimings["graphqlLink_end"] = Date.now() - perfStart;
-
-      perfTimings["dbSchemaLink_start"] = Date.now() - perfStart;
-      if (hasDbEntities) {
-        const dbRels = await resolveDbSchemaLinks(allEntities);
-        if (dbRels > 0) {
-          totalRelationships += dbRels;
-          log.i("DEVAGENT", "db_schema_links_created", { count: dbRels });
-        }
-      }
-      perfTimings["dbSchemaLink_end"] = Date.now() - perfStart;
-    } catch (err) {
-      log.w("DEVAGENT", "cross_domain_link_error", { error: (err as Error).message });
-      perfTimings["swaggerLink_end"] ??= Date.now() - perfStart;
-      perfTimings["protobufLink_start"] ??= perfTimings["swaggerLink_end"];
-      perfTimings["protobufLink_end"] ??= perfTimings["swaggerLink_end"];
-      perfTimings["graphqlLink_start"] ??= perfTimings["swaggerLink_end"];
-      perfTimings["graphqlLink_end"] ??= perfTimings["swaggerLink_end"];
-      perfTimings["dbSchemaLink_start"] ??= perfTimings["swaggerLink_end"];
-      perfTimings["dbSchemaLink_end"] ??= perfTimings["swaggerLink_end"];
-    }
+    totalRelationships += await this.runCrossDomainLinking(perfTimings, perfStart);
 
     perfTimings["indexing_end"] = Date.now() - perfStart;
     log.i("DEVAGENT", "index_done", {
@@ -1652,6 +1589,57 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       totalFiles: allFiles.length,
       perfTimings, // Detailed timing breakdown
     };
+  }
+
+  /**
+   * Cross-domain linking: connect swagger, protobuf, graphql, db schema entities
+   * Returns total new relationships created.
+   */
+  private async runCrossDomainLinking(perfTimings: Record<string, number>, perfStart: number): Promise<number> {
+    let totalNewRels = 0;
+    perfTimings["swaggerLink_start"] = Date.now() - perfStart;
+    try {
+      const { resolveSwaggerLinks, resolveProtobufLinks, resolveGraphQLLinks, resolveDbSchemaLinks } = await import(
+        "./dev/indexing-pipeline.js"
+      );
+      const graphStorage = await (await import("../storage/graph-storage-factory.js")).getGraphStorage();
+      const allEntities = await graphStorage.getAllEntities();
+
+      const checks = {
+        hasSwagger: allEntities.some((e) => e.metadata?.["swaggerType"]),
+        hasProtobuf: allEntities.some((e) => e.metadata?.["protoType"]),
+        hasGraphQL: allEntities.some((e) => e.metadata?.["graphqlType"]),
+        hasDbEntities: allEntities.some((e) => e.metadata?.["isDbSchema"] || e.metadata?.["dbType"]),
+      };
+      log.i("DEVAGENT", "cross_domain_check", checks);
+
+      const linkers: Array<{ key: string; active: boolean; fn: (ents: typeof allEntities) => Promise<number> }> = [
+        { key: "swagger", active: checks.hasSwagger, fn: resolveSwaggerLinks },
+        { key: "protobuf", active: checks.hasProtobuf, fn: resolveProtobufLinks },
+        { key: "graphql", active: checks.hasGraphQL, fn: resolveGraphQLLinks },
+        { key: "dbSchema", active: checks.hasDbEntities, fn: resolveDbSchemaLinks },
+      ];
+
+      for (const { key, active, fn } of linkers) {
+        perfTimings[`${key}Link_start`] = Date.now() - perfStart;
+        if (active) {
+          const rels = await fn(allEntities);
+          if (rels > 0) {
+            totalNewRels += rels;
+            log.i("DEVAGENT", `${key}_links_created`, { count: rels });
+          }
+        }
+        perfTimings[`${key}Link_end`] = Date.now() - perfStart;
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "cross_domain_link_error", { error: (err as Error).message });
+      const now = Date.now() - perfStart;
+      for (const key of ["swagger", "protobuf", "graphql", "dbSchema"]) {
+        perfTimings[`${key}Link_start`] ??= now;
+        perfTimings[`${key}Link_end`] ??= now;
+      }
+    }
+    return totalNewRels;
   }
 
   private handleResourceAdjustment(entry: KnowledgeEntry): void {

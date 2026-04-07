@@ -194,13 +194,14 @@ export class GraphologyPathBuilder {
     // Two queries instead of thousands.
     // When edgeTypes is set, use findRelationships with SQL-level type filter
     // to avoid loading hundreds of thousands of unused relationship rows.
-    const relPromise = edgeTypes
-      ? this.storage.findRelationships({
+    // Sequential DB access: avoid concurrent _r() locks that can deadlock/crash in Bun SQLite
+    const entities = await this.storage.getAllEntities();
+    const relationships = edgeTypes
+      ? await this.storage.findRelationships({
           filters: { relationshipType: edgeTypes as import("../types/storage.js").RelationType[] },
           limit: 500_000,
         })
-      : this.getAllRelationships();
-    const [entities, relationships] = await Promise.all([this.storage.getAllEntities(), relPromise]);
+      : await this.getAllRelationships();
 
     // Build name-to-id lookup for resolving external references
     // Key: entity name (lowercase), Value: array of entity IDs (may have multiple with same name)
