@@ -77,6 +77,117 @@ exemplars:
       }
     description: "Reflection invoke in hot loop"
 
+  # ─── Memory Leak Exemplars ──────────────────────────────────────────
+
+  - id: "java:static-collection-leak:bad1"
+    patternId: "java:static-collection-leak"
+    language: "java"
+    code: |
+      public class UserSessionCache {
+          private static final List<UserSession> activeSessions = new ArrayList<>();
+
+          public static void addSession(UserSession session) {
+              activeSessions.add(session);
+          }
+          // No removeSession() — list grows forever
+      }
+    description: "Static list grows unbounded — sessions are never removed"
+
+  - id: "java:threadlocal-leak:bad1"
+    patternId: "java:threadlocal-leak"
+    language: "java"
+    code: |
+      public class UserContext {
+          private static final ThreadLocal<User> currentUser = new ThreadLocal<>();
+
+          public static void setUser(User user) {
+              currentUser.set(user);
+          }
+
+          public static User getUser() {
+              return currentUser.get();
+          }
+          // No remove() — in thread pools, data leaks between requests
+      }
+    description: "ThreadLocal.set() without remove() leaks in thread pools"
+
+  - id: "java:unbounded-cache:bad1"
+    patternId: "java:unbounded-cache"
+    language: "java"
+    code: |
+      public class ProductCache {
+          private final Map<String, Product> cache = new HashMap<>();
+
+          public Product getProduct(String productId) {
+              if (!cache.containsKey(productId)) {
+                  Product product = fetchProductFromDatabase(productId);
+                  cache.put(productId, product);
+              }
+              return cache.get(productId);
+          }
+      }
+    description: "HashMap cache with no size limit or eviction — grows forever"
+
+  - id: "java:listener-leak:bad1"
+    patternId: "java:listener-leak"
+    language: "java"
+    code: |
+      public class LeakyButton extends JButton {
+          public LeakyButton() {
+              addMouseListener(new MouseAdapter() {
+                  @Override
+                  public void mouseClicked(MouseEvent e) {
+                      System.out.println("Clicked");
+                  }
+              });
+              // No removeMouseListener — anonymous listener cannot be removed
+          }
+      }
+    description: "addMouseListener with anonymous class — cannot unregister"
+
+  - id: "java:unclosed-resource:bad1"
+    patternId: "java:unclosed-resource"
+    language: "java"
+    code: |
+      public String readFile(String path) throws IOException {
+          BufferedReader reader = new BufferedReader(new FileReader(path));
+          StringBuilder content = new StringBuilder();
+          String line;
+          while ((line = reader.readLine()) != null) {
+              content.append(line);
+          }
+          return content.toString();
+          // reader.close() never called — file handle leaks on exception
+      }
+    description: "BufferedReader created without try-with-resources"
+
+  - id: "java:inner-class-leak:bad1"
+    patternId: "java:inner-class-reference-leak"
+    language: "java"
+    code: |
+      public class OrderProcessor {
+          private final List<Order> pendingOrders = new ArrayList<>();
+
+          public void startProcessing() {
+              new Thread(new OrderProcessingTask()).start();
+          }
+
+          private class OrderProcessingTask implements Runnable {
+              @Override
+              public void run() {
+                  while (true) {
+                      processOrders();
+                      Thread.sleep(1000);
+                  }
+              }
+          }
+          // OrderProcessingTask holds implicit reference to OrderProcessor
+          // OrderProcessor can NEVER be garbage collected
+      }
+    description: "Non-static inner class with infinite loop holds outer reference forever"
+
+  # ─── Kotlin Exemplars ─────────────────────────────────────────────
+
   - id: "kotlin:boxing:bad1"
     patternId: "kotlin:boxing-nullable-primitives"
     language: "kotlin"

@@ -159,6 +159,100 @@ patterns:
     minSemanticSimilarity: 0.6
     minStructuralConfidence: 0.5
 
+  # ─── Memory Leak Patterns (from Habr article analysis) ─────────────
+
+  - id: "java:static-collection-leak"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Static Collection Memory Leak"
+    description: "Static List/Map/Set that grows via add()/put() but never clears — unbounded memory growth"
+    suggestion: "Add remove()/clear() lifecycle, use bounded collection (e.g. EvictingQueue), or ConcurrentHashMap with expiry"
+    tags: ["memory", "memory-leak", "state"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+    customDetector: "checkStaticCollectionLeak"
+    exemplarIds: ["java:static-collection-leak:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.6
+
+  - id: "java:threadlocal-leak"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "ThreadLocal Without remove()"
+    description: "ThreadLocal.set() without finally { remove() } — leaks data in thread pools (ExecutorService, Servlet containers)"
+    suggestion: "Always call threadLocal.remove() in a finally block: try { set(value); ... } finally { remove(); }"
+    tags: ["memory", "memory-leak", "concurrency", "thread-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+    customDetector: "checkThreadLocalLeak"
+    exemplarIds: ["java:threadlocal-leak:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.6
+
+  - id: "java:unbounded-cache"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Unbounded Cache Without Eviction"
+    description: "HashMap used as cache with put()/get() but no size limit or TTL — grows indefinitely under load"
+    suggestion: "Use Guava CacheBuilder.newBuilder().maximumSize(N).expireAfterAccess(M, MINUTES) or Caffeine cache"
+    tags: ["memory", "memory-leak", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+    customDetector: "checkUnboundedCache"
+    exemplarIds: ["java:unbounded-cache:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.6
+
+  - id: "java:listener-leak"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Listener/Observer Leak"
+    description: "addListener/addObserver/subscribe without corresponding remove — source holds strong reference preventing GC"
+    suggestion: "Store listener reference and call removeListener/unsubscribe in close(), onDestroy(), or @PreDestroy"
+    tags: ["memory", "memory-leak", "event-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+    customDetector: "checkListenerLeak"
+    exemplarIds: ["java:listener-leak:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  - id: "java:unclosed-resource"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Unclosed Resource (No try-with-resources)"
+    description: "AutoCloseable resource (FileReader, Connection, Socket) created without try-with-resources or close()"
+    suggestion: "Use try-with-resources: try (var reader = new BufferedReader(new FileReader(path))) { ... }"
+    tags: ["memory", "resource-leak", "reliability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+    customDetector: "checkUnclosedResource"
+    exemplarIds: ["java:unclosed-resource:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.7
+
+  - id: "java:inner-class-reference-leak"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Non-Static Inner Class Holds Outer Reference"
+    description: "Non-static inner class implementing Runnable/Thread holds implicit reference to outer instance — prevents GC of outer object"
+    suggestion: "Make inner class static, or use a lambda/static nested class. Add shutdown mechanism for long-lived threads."
+    tags: ["memory", "memory-leak", "concurrency"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+    customDetector: "checkInnerClassReferenceLeak"
+    exemplarIds: ["java:inner-class-leak:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  # ─── Kotlin Patterns ──────────────────────────────────────────────
+
   - id: "kotlin:boxing-nullable-primitives"
     category: "optimization"
     severity: "medium"
