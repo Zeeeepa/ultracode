@@ -5,10 +5,10 @@
  * Replaces synchronous better-sqlite3 BatchOperations.
  */
 
-import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
 import { getCurrentGitBranchOrDefault, getProjectHash } from "../shared/storage-paths.js";
 import { type BatchResult, type Entity, type Relationship, RelationType } from "../types/storage.js";
+import { hashText64, initHasher } from "../utils/fast-hash.js";
 import type { GraphAdapter, ProjectContext } from "./graph-adapter.js";
 
 // =============================================================================
@@ -28,8 +28,6 @@ const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmedi
 export class BatchOperationsLibSQL {
   private batchSize: number;
   private adapter: GraphAdapter;
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
-
   private currentContext: ProjectContext = {
     projectHash: "_unset_",
     branchName: "_unset_",
@@ -56,7 +54,7 @@ export class BatchOperationsLibSQL {
   }
 
   async initialize(): Promise<void> {
-    this.xxhashInstance = await xxhash();
+    await initHasher();
   }
 
   destroy(): void {
@@ -75,11 +73,8 @@ export class BatchOperationsLibSQL {
   }
 
   private stableEntityId(e: Entity): string {
-    if (!this.xxhashInstance) {
-      throw new Error("BatchOperationsLibSQL not initialized - call initialize() first");
-    }
     const key = this.entityKey(e);
-    return this.xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
+    return hashText64(key).slice(0, ID_LENGTH);
   }
 
   private relationshipKey(r: { fromId: string; toId: string; type: RelationType }): string {
@@ -87,11 +82,8 @@ export class BatchOperationsLibSQL {
   }
 
   private stableRelationshipId(r: { fromId: string; toId: string; type: RelationType }): string {
-    if (!this.xxhashInstance) {
-      throw new Error("BatchOperationsLibSQL not initialized - call initialize() first");
-    }
     const key = this.relationshipKey(r);
-    return this.xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
+    return hashText64(key).slice(0, ID_LENGTH);
   }
 
   /**

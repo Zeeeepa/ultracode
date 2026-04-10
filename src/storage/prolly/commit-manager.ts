@@ -11,8 +11,8 @@
  * - Time travel (checkout previous commits)
  */
 
-import xxhash from "xxhash-wasm";
 import { log } from "../../logging/index.js";
+import { hashText64, initHasher } from "../../utils/fast-hash.js";
 import type { Client } from "../libsql/types.js";
 import type { BranchHead, GraphCommit } from "./types.js";
 
@@ -24,7 +24,6 @@ export class CommitManager {
   private client: Client | null = null;
   private projectHash: string = "";
   private branchName: string = "";
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private isInitialized = false;
 
   /**
@@ -32,7 +31,7 @@ export class CommitManager {
    */
   async initialize(client: Client): Promise<void> {
     this.client = client;
-    this.xxhashInstance = await xxhash();
+    await initHasher();
     await this.createTables();
     this.isInitialized = true;
     log.i("COMMIT_MGR", "initialized");
@@ -108,14 +107,12 @@ export class CommitManager {
     message?: string,
   ): Promise<GraphCommit> {
     if (!this.client) throw new Error("Client not initialized");
-    if (!this.xxhashInstance) throw new Error("xxHash not initialized");
-
     const parentCommit = await this.getBranchHead();
     const parentHash = parentCommit?.commitHash || null;
 
     const now = Date.now();
     const commitInput = `${this.projectHash}|${this.branchName}|${parentHash || ""}|${rootNodeHash}|${now}`;
-    const commitHash = this.xxhashInstance.h64ToString(commitInput);
+    const commitHash = hashText64(commitInput);
 
     // Zig-compatible commit: id, project_hash, branch_name, parent_id, root_id, message, created_at
     const commit: GraphCommit = {

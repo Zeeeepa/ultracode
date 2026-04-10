@@ -5,8 +5,8 @@
  * Relationship IDs: xxHash for fast, collision-resistant hashing.
  */
 
-import xxhash from "xxhash-wasm";
 import type { Entity, RelationType } from "../../types/storage.js";
+import { hashText64, initHasher } from "../../utils/fast-hash.js";
 import { generateSemId, type OrdinalMap, type ParentContext } from "./sem-id.js";
 
 // =============================================================================
@@ -16,28 +16,14 @@ import { generateSemId, type OrdinalMap, type ParentContext } from "./sem-id.js"
 const ID_LENGTH = 12;
 
 // =============================================================================
-// XXHASH INITIALIZATION (still needed for relationship IDs and file hashing)
+// XXHASH INITIALIZATION (delegated to fast-hash — Bun.hash SIMD or xxhash-wasm)
 // =============================================================================
 
-let xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
-
 /**
- * Initialize xxHash once
+ * Initialize xxHash (delegates to fast-hash.ts)
  */
 export async function initXXHash(): Promise<void> {
-  if (!xxhashInstance) {
-    xxhashInstance = await xxhash();
-  }
-}
-
-/**
- * Get xxHash instance (throws if not initialized)
- */
-function getXXHash(): Awaited<ReturnType<typeof xxhash>> {
-  if (!xxhashInstance) {
-    throw new Error("xxHash not initialized - call initXXHash() first");
-  }
-  return xxhashInstance;
+  await initHasher();
 }
 
 // =============================================================================
@@ -63,7 +49,7 @@ export function stableEntityId(
     const key = isGlobal
       ? `${base.type}|${base.name}`
       : `${base.filePath}|${base.type}|${base.name}|${base.location?.start?.index ?? -1}-${base.location?.end?.index ?? -1}`;
-    return getXXHash().h64ToString(key).slice(0, ID_LENGTH);
+    return hashText64(key).slice(0, ID_LENGTH);
   }
 
   return generateSemId(base.filePath, base.name, base.type, parentCtx ?? null, ordinalMap);
@@ -74,7 +60,7 @@ export function stableEntityId(
  * Still uses xxHash (same as Zig).
  */
 export function stableRelationshipId(fromId: string, toId: string, type: RelationType | string): string {
-  return getXXHash().h64ToString(`${fromId}|${toId}|${type}`).slice(0, ID_LENGTH);
+  return hashText64(`${fromId}|${toId}|${type}`).slice(0, ID_LENGTH);
 }
 
 // Re-export sem-id types for convenience

@@ -1,6 +1,5 @@
 import { extname } from "node:path";
 import { LRUCache } from "lru-cache";
-import xxhash from "xxhash-wasm";
 import { TS_JS_EXTENSIONS } from "../agents/dev/file-extensions.js";
 import { log } from "../logging/index.js";
 import type {
@@ -12,6 +11,7 @@ import type {
   ParserStats,
   SupportedLanguage,
 } from "../types/parser.js";
+import { hashText64, initHasher } from "../utils/fast-hash.js";
 import { readFilesParallel, readText } from "../utils/file-ops.js";
 import { sleep } from "../utils/runtime-detection.js";
 import { MultiPassOrchestrator } from "./multipass/multipass-orchestrator.js";
@@ -110,7 +110,6 @@ export class IncrementalParser {
   private multiPass: MultiPassOrchestrator | null = null;
   private cache: LRUCache<string, CacheEntry>;
   private hashFn: ContentHasher | null = null;
-  private xxInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private stats: ParserStats;
   private fileHashMap = new Map<string, string>();
   private multiPassEnabled = true;
@@ -151,17 +150,13 @@ export class IncrementalParser {
         this.multiPass = null;
       }
     }
-    this.xxInstance = await xxhash();
-    this.hashFn = (text: string) => {
-      if (!this.xxInstance) throw new Error("xxHash not initialized");
-      return this.xxInstance.h64ToString(text).substring(0, 16);
-    };
+    await initHasher();
+    this.hashFn = (text: string) => hashText64(text).substring(0, 16);
     log.i("INCPARSER", "init_done");
   }
 
   computeFileHash(content: string): string {
-    if (!this.hashFn || !this.xxInstance)
-      throw new Error("IncrementalParser not initialized - call initialize() first");
+    if (!this.hashFn) throw new Error("IncrementalParser not initialized - call initialize() first");
     return this.hashFn(content);
   }
 

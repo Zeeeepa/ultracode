@@ -1,33 +1,38 @@
 /**
- * Fast Hashing Utilities with WASM SIMD Acceleration
+ * Fast Hashing Utilities
  *
- * Uses xxHash (WASM) - NO FALLBACK to ensure deterministic hashes.
- * MUST call initHasher() before using hashText().
+ * Runtime-adaptive: uses Bun.hash (SIMD-native) when available,
+ * falls back to xxhash-wasm for Node.js.
  *
  * Performance:
- * - xxHash (WASM SIMD): ~15µs for typical text
- * - 2-4x faster than pure JS hash
+ * - Bun.hash (SIMD):      ~2-5µs, sync, no init
+ * - xxHash (WASM):         ~15µs, async init required
  */
 
 import type { XXHashAPI } from "xxhash-wasm";
-import xxhash from "xxhash-wasm";
 
 // =============================================================================
-// MODULE STATE
+// RUNTIME DETECTION
+// =============================================================================
+
+const isBun = typeof globalThis.Bun !== "undefined" && typeof (globalThis.Bun as any).hash?.xxHash32 === "function";
+
+// =============================================================================
+// MODULE STATE (only used for xxhash-wasm fallback)
 // =============================================================================
 
 let hasher: XXHashAPI | null = null;
 let initPromise: Promise<void> | null = null;
-let initialized = false;
+let initialized = isBun; // Bun needs no init
 
 // =============================================================================
 // INITIALIZATION
 // =============================================================================
 
 /**
- * Initialize xxHash WASM module.
- * MUST be called at application startup before any hashText() calls.
- * Will throw if initialization fails.
+ * Initialize hashing backend.
+ * Under Bun: instant (no-op, SIMD-native).
+ * Under Node.js: loads xxhash WASM module.
  */
 export async function initHasher(): Promise<void> {
   if (initialized) return;
@@ -39,6 +44,7 @@ export async function initHasher(): Promise<void> {
 
   initPromise = (async () => {
     try {
+      const xxhash = (await import("xxhash-wasm")).default;
       hasher = await xxhash();
       initialized = true;
       console.log("[FastHash] xxHash WASM initialized");
@@ -51,24 +57,37 @@ export async function initHasher(): Promise<void> {
   await initPromise;
 }
 
-// Start initialization immediately (will be awaited in index.ts)
-initPromise = initHasher().catch((e) => {
-  console.error("[FastHash] Background init failed:", e);
-});
+// Start initialization immediately
+if (isBun) {
+  console.log("[FastHash] Using Bun.hash (SIMD-native)");
+} else {
+  initPromise = initHasher().catch((e) => {
+    console.error("[FastHash] Background init failed:", e);
+  });
+}
+
+// =============================================================================
+// INTERNAL — Bun.hash wrappers (BigInt → hex string)
+// =============================================================================
+
+function bunHash32(text: string): string {
+  return ((globalThis.Bun as any).hash.xxHash32(text) as number).toString(16).padStart(8, "0");
+}
+
+function bunHash64(text: string): string {
+  return ((globalThis.Bun as any).hash.xxHash64(text) as bigint).toString(16).padStart(16, "0");
+}
 
 // =============================================================================
 // PUBLIC API
 // =============================================================================
 
 /**
- * Fast hash function using xxHash WASM
- * IMPORTANT: initHasher() must be called and awaited before using this function
- *
- * @param text - Text to hash
- * @returns Hash string (hex format from xxHash)
- * @throws Error if xxHash not initialized
+ * Fast 32-bit hash (hex string).
+ * @throws Error if not initialized (Node.js only)
  */
 export function hashText(text: string): string {
+  if (isBun) return bunHash32(text);
   if (!hasher) {
     throw new Error("hashText called before xxHash initialized. Call await initHasher() first.");
   }
@@ -76,12 +95,36 @@ export function hashText(text: string): string {
 }
 
 /**
- * Async hash function - waits for initialization if needed
- *
- * @param text - Text to hash
- * @returns Promise<hash string>
+ * Fast 64-bit hash (hex string).
+ * Use for content hashing, entity IDs, merkle trees.
+ * @throws Error if not initialized (Node.js only)
+ */
+export function hashText64(text: string): string {
+  if (isBun) return bunHash64(text);
+  if (!hasher) {
+    throw new Error("hashText64 called before xxHash initialized. Call await initHasher() first.");
+  }
+  return hasher.h64ToString(text);
+}
+
+/**
+ * Fast 64-bit hash (BigInt).
+ * Used by prolly trees for boundary decisions.
+ * @throws Error if not initialized (Node.js only)
+ */
+export function hashBigInt64(text: string): bigint {
+  if (isBun) return (globalThis.Bun as any).hash.xxHash64(text) as bigint;
+  if (!hasher) {
+    throw new Error("hashBigInt64 called before xxHash initialized. Call await initHasher() first.");
+  }
+  return hasher.h64(text);
+}
+
+/**
+ * Async hash — waits for initialization if needed.
  */
 export async function hashTextAsync(text: string): Promise<string> {
+  if (isBun) return bunHash32(text);
   if (!initialized) {
     await initHasher();
   }
@@ -89,21 +132,14 @@ export async function hashTextAsync(text: string): Promise<string> {
 }
 
 /**
- * Hash number (for numeric keys)
- *
- * @param num - Number to hash
- * @returns Hash string
- * @throws Error if xxHash not initialized
+ * Hash number (for numeric keys).
+ * @throws Error if not initialized (Node.js only)
  */
 export function hashNumber(num: number): string {
-  if (!hasher) {
-    throw new Error("hashNumber called before xxHash initialized. Call await initHasher() first.");
-  }
-  return hasher.h32ToString(num.toString());
+  return hashText(num.toString());
 }
 
 /**
- * Preload xxHash WASM module - alias for initHasher()
  * @deprecated Use initHasher() instead
  */
 export async function preloadHasher(): Promise<void> {
@@ -111,24 +147,26 @@ export async function preloadHasher(): Promise<void> {
 }
 
 /**
- * Check if hasher is ready (useful for conditional sync/async paths)
+ * Check if hasher is ready.
  */
 export function isHasherReady(): boolean {
-  return initialized && hasher !== null;
+  return initialized;
 }
 
 /**
- * Get hasher status for diagnostics
+ * Get hasher status for diagnostics.
  */
 export function getHasherStatus(): {
   initialized: boolean;
   fallback: boolean;
   enabled: boolean;
+  backend: "bun-simd" | "xxhash-wasm";
 } {
   return {
     initialized,
     fallback: false,
     enabled: true,
+    backend: isBun ? "bun-simd" : "xxhash-wasm",
   };
 }
 

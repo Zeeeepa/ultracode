@@ -19,8 +19,8 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
+import { hashText64, initHasher } from "../utils/fast-hash.js";
 import { streamCopyFile } from "../utils/stream-helpers.js";
 
 // =============================================================================
@@ -61,7 +61,6 @@ export interface SnapshotListEntry {
 
 export class VersionManager {
   private config: Required<VersionManagerConfig>;
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private hasGit: boolean = false;
 
   constructor(config: VersionManagerConfig) {
@@ -77,8 +76,7 @@ export class VersionManager {
    * Initialize Version Manager
    */
   async initialize(): Promise<void> {
-    // Initialize xxHash
-    this.xxhashInstance = await xxhash();
+    await initHasher();
 
     // Detect git
     this.hasGit = await this.detectGit();
@@ -96,10 +94,6 @@ export class VersionManager {
    * Create snapshot of current state
    */
   async createSnapshot(description: string, files?: string[]): Promise<string> {
-    if (!this.xxhashInstance) {
-      throw new Error("VersionManager not initialized");
-    }
-
     if (this.hasGit) {
       return this.createGitSnapshot(description, files);
     } else {
@@ -265,7 +259,7 @@ export class VersionManager {
       }).trim();
 
       // Compute hash
-      const hash = this.xxhashInstance!.h64ToString(stashRef);
+      const hash = hashText64(stashRef);
 
       // Save metadata
       const metadata: SnapshotMetadata = {
@@ -374,7 +368,7 @@ export class VersionManager {
 
     // Compute xxHash of snapshot directory for integrity
     const hashContent = `${snapshotId}:${timestamp}:${filesToBackup.length}`;
-    const hash = this.xxhashInstance!.h64ToString(hashContent);
+    const hash = hashText64(hashContent);
 
     const metadata: SnapshotMetadata = {
       id: snapshotId,

@@ -13,8 +13,8 @@
  */
 
 import * as cbor from "cbor-x";
-import xxhash from "xxhash-wasm";
 import { log } from "../../logging/index.js";
+import { hashBigInt64, hashText64, initHasher } from "../../utils/fast-hash.js";
 import type { ProllyNodeStore } from "./node-store.js";
 import {
   DEFAULT_PROLLY_CONFIG,
@@ -33,7 +33,6 @@ import {
 export class ProllyTree {
   private nodeStore: ProllyNodeStore;
   private config: Required<ProllyTreeConfig>;
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private rootHash: string | null = null;
 
   constructor(nodeStore: ProllyNodeStore, config: ProllyTreeConfig = {}) {
@@ -45,7 +44,7 @@ export class ProllyTree {
    * Initialize the tree (must be called before use)
    */
   async initialize(): Promise<void> {
-    this.xxhashInstance = await xxhash();
+    await initHasher();
   }
 
   /**
@@ -115,7 +114,7 @@ export class ProllyTree {
   private async buildLeafLevel(
     sortedEntries: Array<{ key: string; value: Uint8Array }>,
   ): Promise<Array<{ hash: string; keyStart: string; keyEnd: string; count: number }>> {
-    if (!this.xxhashInstance) throw new Error("Not initialized");
+    // hasher initialized via fast-hash module
 
     const leafNodes: Array<{ hash: string; keyStart: string; keyEnd: string; count: number }> = [];
     let currentChunk: ProllyEntry[] = [];
@@ -126,7 +125,7 @@ export class ProllyTree {
       if (!entry) continue;
 
       const valueStr = Buffer.from(entry.value).toString("base64");
-      const valueHash = this.xxhashInstance.h64ToString(valueStr);
+      const valueHash = hashText64(valueStr);
 
       const prollyEntry: ProllyEntry = {
         key: entry.key,
@@ -141,7 +140,7 @@ export class ProllyTree {
       currentChunk.push(prollyEntry);
 
       // Check if we should split (probabilistic boundary OR max size OR last entry)
-      const keyHash = this.xxhashInstance.h64(entry.key);
+      const keyHash = hashBigInt64(entry.key);
       const shouldSplit =
         this.shouldChunkSplit(keyHash) ||
         currentChunk.length >= this.config.maxLeafEntries ||
@@ -198,7 +197,7 @@ export class ProllyTree {
   private async buildInternalLevel(
     children: Array<{ hash: string; keyStart: string; keyEnd: string; count: number }>,
   ): Promise<Array<{ hash: string; keyStart: string; keyEnd: string; count: number }>> {
-    if (!this.xxhashInstance) throw new Error("Not initialized");
+    // hasher initialized via fast-hash module
 
     const internalNodes: Array<{ hash: string; keyStart: string; keyEnd: string; count: number }> = [];
     let currentChildren: typeof children = [];
@@ -217,7 +216,7 @@ export class ProllyTree {
       groupEntryCount += child.count;
 
       // Check if we should split
-      const keyHash = this.xxhashInstance.h64(child.hash);
+      const keyHash = hashBigInt64(child.hash);
       const shouldSplit = this.shouldChunkSplit(keyHash) || i === children.length - 1;
 
       if (shouldSplit && currentChildren.length > 0) {
@@ -632,7 +631,7 @@ export class ProllyTree {
 
     for (const entry of entries) {
       const valueStr = Buffer.from(entry.value).toString("base64");
-      const valueHash = this.xxhashInstance?.h64ToString(valueStr) || "";
+      const valueHash = hashText64(valueStr) || "";
       const change: EntryChange = { key: entry.key };
 
       if (changeType === "added") {

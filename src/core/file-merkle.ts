@@ -14,10 +14,10 @@
  */
 
 import { dirname, relative } from "node:path";
-import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
 import type { Client } from "../storage/libsql/types.js";
 import type { FileChange, FileDiff, FileMerkleNode, MerkleFileInfo } from "../storage/prolly/types.js";
+import { hashText64, initHasher } from "../utils/fast-hash.js";
 
 // =============================================================================
 // FILE MERKLE TREE
@@ -28,7 +28,6 @@ export class FileMerkleTree {
   private projectHash: string = "";
   private branchName: string = "";
   private rootPath: string = "";
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private isInitialized = false;
 
   /**
@@ -36,7 +35,7 @@ export class FileMerkleTree {
    */
   async initialize(client: Client): Promise<void> {
     this.client = client;
-    this.xxhashInstance = await xxhash();
+    await initHasher();
     await this.createTable();
     this.isInitialized = true;
     log.i("FILE_MERKLE", "initialized");
@@ -89,7 +88,6 @@ export class FileMerkleTree {
    */
   async build(files: MerkleFileInfo[]): Promise<string> {
     if (!this.client) throw new Error("Client not initialized");
-    if (!this.xxhashInstance) throw new Error("xxHash not initialized");
 
     const start = Date.now();
 
@@ -98,7 +96,7 @@ export class FileMerkleTree {
 
     if (files.length === 0) {
       // Empty project - create empty root
-      const emptyHash = this.xxhashInstance.h64ToString("");
+      const emptyHash = hashText64("");
       await this.insertNode(".", emptyHash, null, false, 0);
       return emptyHash;
     }
@@ -182,7 +180,7 @@ export class FileMerkleTree {
 
       // Compute directory hash from sorted child hashes
       const sortedHashes = childHashes.sort();
-      const dirHash = this.xxhashInstance.h64ToString(sortedHashes.join("|"));
+      const dirHash = hashText64(sortedHashes.join("|"));
       dirHashes.set(dir, dirHash);
 
       const parentPath = dirname(dir);
@@ -224,9 +222,8 @@ export class FileMerkleTree {
     childrenCount: number,
   ): Promise<void> {
     if (!this.client) throw new Error("Client not initialized");
-    if (!this.xxhashInstance) throw new Error("xxHash not initialized");
 
-    const id = this.xxhashInstance.h64ToString(`${this.projectHash}|${this.branchName}|${path}`);
+    const id = hashText64(`${this.projectHash}|${this.branchName}|${path}`);
     const now = Date.now();
 
     await this.client.execute({
@@ -250,7 +247,7 @@ export class FileMerkleTree {
     }>,
   ): Promise<void> {
     if (!this.client) throw new Error("Client not initialized");
-    if (!this.xxhashInstance) throw new Error("xxHash not initialized");
+
     if (nodes.length === 0) return;
 
     const now = Date.now();
@@ -262,7 +259,7 @@ export class FileMerkleTree {
       const args: (string | number | null)[] = [];
 
       for (const node of batch) {
-        const id = this.xxhashInstance.h64ToString(`${this.projectHash}|${this.branchName}|${node.path}`);
+        const id = hashText64(`${this.projectHash}|${this.branchName}|${node.path}`);
         args.push(
           id,
           this.projectHash,
@@ -353,7 +350,6 @@ export class FileMerkleTree {
    */
   async updateFile(filePath: string, newHash: string): Promise<string> {
     if (!this.client) throw new Error("Client not initialized");
-    if (!this.xxhashInstance) throw new Error("xxHash not initialized");
 
     const normalizedPath = this.normalizePath(filePath);
 
@@ -424,11 +420,9 @@ export class FileMerkleTree {
    * Recompute hash for a directory from its children
    */
   private async recomputeDirHash(dirPath: string): Promise<string> {
-    if (!this.xxhashInstance) throw new Error("xxHash not initialized");
-
     const children = await this.getChildren(dirPath);
     const childHashes = children.map((c) => c.hash).sort();
-    return this.xxhashInstance.h64ToString(childHashes.join("|"));
+    return hashText64(childHashes.join("|"));
   }
 
   // ===========================================================================
@@ -575,7 +569,6 @@ export class FileMerkleTree {
     nodeCount: number;
   }> {
     if (!this.client) throw new Error("Client not initialized");
-    if (!this.xxhashInstance) throw new Error("xxHash not initialized");
 
     const errors: string[] = [];
 
@@ -593,7 +586,7 @@ export class FileMerkleTree {
       if (!node.isLeaf) {
         const children = nodes.filter((n) => n.parentPath === node.path);
         const childHashes = children.map((c) => c.hash).sort();
-        const expectedHash = this.xxhashInstance.h64ToString(childHashes.join("|"));
+        const expectedHash = hashText64(childHashes.join("|"));
 
         if (node.hash !== expectedHash) {
           errors.push(

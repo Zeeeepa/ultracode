@@ -1,6 +1,6 @@
 # modification
 
-Safe code modification and file operations with universal preview and impact estimation.
+Safe entity-based code modification with snapshots, previews, and validation.
 
 ## Overview
 

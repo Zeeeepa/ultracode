@@ -1,6 +1,6 @@
 # Versioning
 
-Manages code snapshots with Git worktree or backup directory fallback
+Manages code snapshots with automatic git worktree or backup directory fallback.
 
 ## Overview
 

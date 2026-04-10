@@ -225,10 +225,15 @@ export class CPUDetector {
   }
 
   /**
-   * Count physical CPU cores (not threads)
+   * Count physical CPU cores (not threads).
+   *
+   * cgroup-aware: on Linux containers, os.cpus().length (Bun 1.3.12+) respects
+   * cgroup CPU limits, but lscpu reports host cores. We cap the result to
+   * os.cpus().length to prevent over-provisioning in containers.
    */
   private static countPhysicalCores(): number {
     const platform = os.platform();
+    const threadCount = os.cpus().length;
 
     try {
       if (platform === "linux") {
@@ -236,7 +241,10 @@ export class CPUDetector {
           encoding: "utf8",
           timeout: 2000,
         });
-        return parseInt(output.trim(), 10) || os.cpus().length / 2;
+        const lscpuCores = parseInt(output.trim(), 10);
+        // Cap to threadCount: in cgroup containers lscpu sees host cores
+        // but os.cpus() (Bun 1.3.12+) sees container limits
+        return lscpuCores ? Math.min(lscpuCores, threadCount) : Math.floor(threadCount / 2);
       }
 
       if (platform === "darwin") {
@@ -244,7 +252,7 @@ export class CPUDetector {
           encoding: "utf8",
           timeout: 2000,
         });
-        return parseInt(output.trim(), 10) || os.cpus().length / 2;
+        return parseInt(output.trim(), 10) || Math.floor(threadCount / 2);
       }
 
       if (platform === "win32") {
@@ -254,13 +262,13 @@ export class CPUDetector {
           windowsHide: true,
         });
         const match = output.match(/NumberOfCores=(\d+)/);
-        return match?.[1] ? parseInt(match[1], 10) : os.cpus().length / 2;
+        return match?.[1] ? parseInt(match[1], 10) : Math.floor(threadCount / 2);
       }
     } catch {
       // Fallback: assume hyperthreading (threads / 2)
     }
 
-    return Math.max(1, Math.floor(os.cpus().length / 2));
+    return Math.max(1, Math.floor(threadCount / 2));
   }
 
   /**

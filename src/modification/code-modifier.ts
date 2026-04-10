@@ -271,9 +271,8 @@ export class CodeModifier {
    */
   private async updateEntityInGraph(entity: Entity, newCode: string): Promise<void> {
     // Compute new hash for entity
-    const xxhash = await import("xxhash-wasm");
-    const xxhashInstance = await xxhash.default();
-    const newHash = xxhashInstance.h64ToString(newCode).slice(0, 16);
+    const { hashText64: h64 } = await import("../utils/fast-hash.js");
+    const newHash = h64(newCode).slice(0, 16);
 
     // Update entity
     await this.graphStorage.updateEntity(entity.id, {

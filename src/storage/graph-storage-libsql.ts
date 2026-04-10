@@ -8,8 +8,6 @@
  * graph (entities/relationships) and vector operations in a single database.
  */
 
-import { nanoid } from "nanoid";
-import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
 import { detectBaseBranch } from "../semantic/faiss/base-branch-detector.js";
 import { getCurrentGitBranchOrDefault, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
@@ -27,6 +25,7 @@ import {
   RelationType,
   type StorageMetrics,
 } from "../types/storage.js";
+import { hashText64, initHasher } from "../utils/fast-hash.js";
 import type { GraphAdapter, ProjectContext } from "./graph-adapter.js";
 
 // =============================================================================
@@ -62,8 +61,6 @@ export function createProjectContext(projectPath: string, branchName?: string | 
 
 export class GraphStorageLibSQL implements GraphStorage {
   private adapter: GraphAdapter;
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
-
   constructor(adapter: GraphAdapter) {
     this.adapter = adapter;
   }
@@ -75,10 +72,9 @@ export class GraphStorageLibSQL implements GraphStorage {
   async initialize(): Promise<void> {
     const startTime = Date.now();
     log.t("STORAGE", `[GraphStorageLibSQL] ▶ initialize() START`);
-    // Initialize xxHash for fast entity ID generation
-    this.xxhashInstance = await xxhash();
+    await initHasher();
     log.t("STORAGE", `[GraphStorageLibSQL] ◀ initialize() END (${Date.now() - startTime}ms)`);
-    log.i("GRAPHSTORAGE", "init_xxhash");
+    log.i("GRAPHSTORAGE", "init_hash");
   }
 
   // ===========================================================================
@@ -778,10 +774,6 @@ export class GraphStorageLibSQL implements GraphStorage {
   // HELPER METHODS
   // ===========================================================================
 
-  private generateId(): string {
-    return nanoid(ID_LENGTH);
-  }
-
   private entityKey(e: Entity): string {
     const s = e.location?.start?.index ?? -1;
     const eIdx = e.location?.end?.index ?? -1;
@@ -789,13 +781,8 @@ export class GraphStorageLibSQL implements GraphStorage {
   }
 
   private stableEntityId(e: Entity): string {
-    if (!this.xxhashInstance) {
-      // Fallback to nanoid if xxHash not initialized
-      return this.generateId();
-    }
     const key = this.entityKey(e);
-    const hash = this.xxhashInstance.h64ToString(key);
-    return hash.slice(0, ID_LENGTH);
+    return hashText64(key).slice(0, ID_LENGTH);
   }
 
   private relationshipKey(r: Relationship): string {
@@ -803,12 +790,8 @@ export class GraphStorageLibSQL implements GraphStorage {
   }
 
   private stableRelationshipId(r: Relationship): string {
-    if (!this.xxhashInstance) {
-      return this.generateId();
-    }
     const key = this.relationshipKey(r);
-    const hash = this.xxhashInstance.h64ToString(key);
-    return hash.slice(0, ID_LENGTH);
+    return hashText64(key).slice(0, ID_LENGTH);
   }
 
   private calculateComplexity(entity: Entity): number {

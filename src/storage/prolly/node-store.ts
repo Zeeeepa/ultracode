@@ -13,8 +13,8 @@
 
 import * as cbor from "cbor-x";
 import { LRUCache } from "lru-cache";
-import xxhash from "xxhash-wasm";
 import { log } from "../../logging/index.js";
+import { hashText64, initHasher } from "../../utils/fast-hash.js";
 import type { Client } from "../libsql/types.js";
 import type { InternalNodeData, LeafNodeData, ProllyNode, ProllyNodeType } from "./types.js";
 
@@ -42,7 +42,6 @@ export class ProllyNodeStore {
   private client: Client | null = null;
   private config: Required<NodeStoreConfig>;
   private cache: LRUCache<string, ProllyNode>;
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private isInitialized = false;
 
   constructor(config: NodeStoreConfig = {}) {
@@ -57,7 +56,7 @@ export class ProllyNodeStore {
    */
   async initialize(client: Client): Promise<void> {
     this.client = client;
-    this.xxhashInstance = await xxhash();
+    await initHasher();
     await this.createTable();
     this.isInitialized = true;
     log.i("PROLLY_STORE", "initialized");
@@ -96,16 +95,12 @@ export class ProllyNodeStore {
    * Compute content hash for a node
    */
   computeHash(node: Omit<ProllyNode, "contentHash" | "hash">): string {
-    if (!this.xxhashInstance) {
-      throw new Error("xxHash not initialized");
-    }
-
     // Create deterministic representation
     const parts: string[] = [node.type];
 
     if (node.data) {
       const dataStr = Buffer.from(node.data).toString("base64");
-      parts.push(this.xxhashInstance.h64ToString(dataStr));
+      parts.push(hashText64(dataStr));
     }
 
     if (node.childrenHashes && node.childrenHashes.length > 0) {
@@ -113,7 +108,7 @@ export class ProllyNodeStore {
     }
 
     const content = parts.join(":");
-    return this.xxhashInstance.h64ToString(content);
+    return hashText64(content);
   }
 
   /**
@@ -535,10 +530,7 @@ export class ProllyNodeStore {
    * Hash a value (for change detection)
    */
   hashValue(value: Uint8Array): string {
-    if (!this.xxhashInstance) {
-      throw new Error("xxHash not initialized");
-    }
     const str = Buffer.from(value).toString("base64");
-    return this.xxhashInstance.h64ToString(str);
+    return hashText64(str);
   }
 }
