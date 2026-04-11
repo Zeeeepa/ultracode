@@ -8,6 +8,56 @@
   "opt_level": 3,
   "models": [
     {
+      "id": "bge-micro-v2",
+      "name": "BGE Micro v2",
+      "hf_repo": "TaylorAI/bge-micro-v2",
+      "onnx_file": "onnx/model.onnx",
+      "tokenizer_file": "tokenizer.json",
+      "dimension": 384,
+      "max_tokens": 512,
+      "size_mb": 17,
+      "lang": "en",
+      "note": "STS 82.6, 17MB — ultra-tiny, NPU/embedded, small projects",
+      "note_ru": "STS 82.6, 17МБ — ультракомпакт, NPU, малые проекты",
+      "mteb_score": 42.56,
+      "cdn": {
+        "vulkan": "bge-micro-v2/model_vulkan.dll",
+        "tensorrt_sm_86_win": "bge-micro-v2/model_gpu_cuda_sm_86_win.engine",
+        "tensorrt_sm_86_linux": "bge-micro-v2/model_gpu_cuda_sm_86_linux.engine",
+        "tensorrt_sm_89_win": "bge-micro-v2/model_gpu_cuda_sm_89_win.engine",
+        "tensorrt_sm_89_linux": "bge-micro-v2/model_gpu_cuda_sm_89_linux.engine",
+        "tensorrt_sm_120_win": "bge-micro-v2/model_gpu_cuda_sm_120_win.engine",
+        "tensorrt_sm_120_linux": "bge-micro-v2/model_gpu_cuda_sm_120_linux.engine",
+        "tokenizer": "bge-micro-v2/tokenizer.json",
+        "vocab": "bge-micro-v2/vocab.txt"
+      }
+    },
+    {
+      "id": "bge-small-en-v1.5",
+      "name": "BGE Small v1.5",
+      "hf_repo": "BAAI/bge-small-en-v1.5",
+      "onnx_file": "onnx/model.onnx",
+      "tokenizer_file": "tokenizer.json",
+      "dimension": 384,
+      "max_tokens": 512,
+      "size_mb": 133,
+      "lang": "en",
+      "note": "STS 81.6, MTEB 62 — best overall 384d, Rust/Go/C++/Zig",
+      "note_ru": "STS 81.6, MTEB 62 — лучшая 384d, Rust/Go/C++/Zig",
+      "mteb_score": 62.17,
+      "cdn": {
+        "vulkan": "bge-small-en-v1.5/model_vulkan.dll",
+        "tensorrt_sm_86_win": "bge-small-en-v1.5/model_gpu_cuda_sm_86_win.engine",
+        "tensorrt_sm_86_linux": "bge-small-en-v1.5/model_gpu_cuda_sm_86_linux.engine",
+        "tensorrt_sm_89_win": "bge-small-en-v1.5/model_gpu_cuda_sm_89_win.engine",
+        "tensorrt_sm_89_linux": "bge-small-en-v1.5/model_gpu_cuda_sm_89_linux.engine",
+        "tensorrt_sm_120_win": "bge-small-en-v1.5/model_gpu_cuda_sm_120_win.engine",
+        "tensorrt_sm_120_linux": "bge-small-en-v1.5/model_gpu_cuda_sm_120_linux.engine",
+        "tokenizer": "bge-small-en-v1.5/tokenizer.json",
+        "vocab": "bge-small-en-v1.5/vocab.txt"
+      }
+    },
+    {
       "id": "snowflake-arctic-embed-xs",
       "name": "Arctic XS",
       "hf_repo": "Snowflake/snowflake-arctic-embed-xs",
@@ -17,8 +67,8 @@
       "max_tokens": 512,
       "size_mb": 90,
       "lang": "en",
-      "note": "Smallest, code-optimized",
-      "note_ru": "Самая компактная, для кода",
+      "note": "STS 78.4 — code-tuned retrieval, Python/JS/TS",
+      "note_ru": "STS 78.4 — для поиска по коду, Python/JS/TS",
       "mteb_score": 50.0,
       "cdn": {
         "vulkan": "snowflake-arctic-embed-xs/model_vulkan.dll",
@@ -42,8 +92,8 @@
       "max_tokens": 512,
       "size_mb": 118,
       "lang": "multi",
-      "note": "Fast, 94 languages",
-      "note_ru": "Быстрая, 94 языка",
+      "note": "STS 84.0 — best STS 384d, multilingual, mixed-lang projects",
+      "note_ru": "STS 84.0 — лучший STS 384d, мультиязычные проекты",
       "mteb_score": 57.79,
       "cdn": {
         "vulkan": "multilingual-e5-small/model_vulkan.dll",
@@ -70,8 +120,8 @@
       "max_tokens": 512,
       "size_mb": 91,
       "lang": "en",
-      "note": "Fastest, English",
-      "note_ru": "Быстрейшая, English",
+      "note": "STS ~82 — fastest inference, any language, baseline",
+      "note_ru": "STS ~82 — быстрейший inference, любой язык, базовая",
       "mteb_score": 56.26,
       "cdn": {
         "vulkan": "all-MiniLM-L6-v2/model_vulkan.dll",
@@ -94,8 +144,8 @@
       "max_tokens": 512,
       "size_mb": 470,
       "lang": "multi",
-      "note": "Balanced, 94 languages",
-      "note_ru": "Сбалансированная, 94 языка",
+      "note": "768d multilingual — mixed-lang codebases, i18n projects",
+      "note_ru": "768d мультиязычная — смешанные кодовые базы, i18n",
       "mteb_score": 59.45,
       "cdn": {
         "vulkan": "multilingual-e5-base/model_vulkan.dll",
@@ -118,8 +168,8 @@
       "max_tokens": 8192,
       "size_mb": 548,
       "lang": "en",
-      "note": "8K context — best for Java/C#",
-      "note_ru": "8K контекст — рек. для Java/C#",
+      "note": "STS ~83, 8K ctx — Java/C#/Kotlin, verbose signatures",
+      "note_ru": "STS ~83, 8K ctx — Java/C#/Kotlin, длинные сигнатуры",
       "mteb_score": 62.28,
       "cdn": {
         "vulkan": "nomic-embed-text-v1.5/model_vulkan.dll",
@@ -142,8 +192,8 @@
       "max_tokens": 4096,
       "size_mb": 23,
       "lang": "en",
-      "note": "MiniLM upgrade, Matryoshka, 24MB INT8",
-      "note_ru": "Замена MiniLM, Matryoshka, 24МБ INT8",
+      "note": "4K ctx, 23MB, Matryoshka — Python/JS/TS, long docstrings",
+      "note_ru": "4K ctx, 23МБ, Matryoshka — Python/JS/TS, длинные docstrings",
       "cdn": {
         "vulkan": "mxbai-embed-xsmall-v1/model_vulkan.dll",
         "tensorrt_sm_86_win": "mxbai-embed-xsmall-v1/model_gpu_cuda_sm_86_win.engine",
@@ -165,8 +215,8 @@
       "max_tokens": 8192,
       "size_mb": 149,
       "lang": "en",
-      "note": "Top quality 8K — best for Java/C#",
-      "note_ru": "Лучшее качество 8K — рек. для Java/C#",
+      "note": "STS 81.6, MTEB 64.4, 8K — best 768d, Java/C#/Go/Kotlin",
+      "note_ru": "STS 81.6, MTEB 64.4, 8K — лучшая 768d, Java/C#/Go/Kotlin",
       "mteb_score": 64.38,
       "cdn": {
         "vulkan": "gte-modernbert-base/model_vulkan.dll",
@@ -189,8 +239,8 @@
       "max_tokens": 8192,
       "size_mb": 149,
       "lang": "en",
-      "note": "Matryoshka 768>256d 8K — best for Java/C#",
-      "note_ru": "Matryoshka 768>256d 8K — рек. для Java/C#",
+      "note": "STS ~82, Matryoshka 768>256d, 8K — Java/C#/Go, compact storage",
+      "note_ru": "STS ~82, Matryoshka 768>256d, 8K — Java/C#/Go, компактное хранение",
       "mteb_score": 62.62,
       "cdn": {
         "vulkan": "modernbert-embed-base/model_vulkan.dll",
@@ -201,6 +251,32 @@
         "tensorrt_sm_120_win": "modernbert-embed-base/model_gpu_cuda_sm_120_win.engine",
         "tensorrt_sm_120_linux": "modernbert-embed-base/model_gpu_cuda_sm_120_linux.engine",
         "tokenizer": "modernbert-embed-base/tokenizer.json"
+      }
+    },
+    {
+      "id": "embeddinggemma-300m",
+      "name": "EmbeddingGemma 300M",
+      "hf_repo": "google/embeddinggemma-300m",
+      "onnx_file": "model.onnx",
+      "tokenizer_file": "tokenizer.json",
+      "dimension": 768,
+      "max_tokens": 2048,
+      "size_mb": 617,
+      "lang": "en",
+      "note": "MTEB 69.7, code retrieval 68.8 — top quality, all languages",
+      "note_ru": "MTEB 69.7, код 68.8 — лучшее качество, все языки",
+      "mteb_score": 69.67,
+      "prepare": true,
+      "gated": true,
+      "cdn": {
+        "vulkan": "embeddinggemma-300m/model_vulkan.dll",
+        "tensorrt_sm_86_win": "embeddinggemma-300m/model_gpu_cuda_sm_86_win.engine",
+        "tensorrt_sm_86_linux": "embeddinggemma-300m/model_gpu_cuda_sm_86_linux.engine",
+        "tensorrt_sm_89_win": "embeddinggemma-300m/model_gpu_cuda_sm_89_win.engine",
+        "tensorrt_sm_89_linux": "embeddinggemma-300m/model_gpu_cuda_sm_89_linux.engine",
+        "tensorrt_sm_120_win": "embeddinggemma-300m/model_gpu_cuda_sm_120_win.engine",
+        "tensorrt_sm_120_linux": "embeddinggemma-300m/model_gpu_cuda_sm_120_linux.engine",
+        "tokenizer": "embeddinggemma-300m/tokenizer.json"
       }
     },
     {

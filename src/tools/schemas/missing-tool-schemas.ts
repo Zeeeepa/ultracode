@@ -122,7 +122,9 @@ export const SetupEmbeddingSchema = z.object({
     .string()
     .optional()
     .default("multilingual-e5-small")
-    .describe("Model ID: multilingual-e5-small, snowflake-arctic-embed-xs, all-MiniLM-L6-v2, nomic-embed-text-v1.5"),
+    .describe(
+      "Model ID: multilingual-e5-small, bge-small-en-v1.5, bge-micro-v2, snowflake-arctic-embed-xs, all-MiniLM-L6-v2, nomic-embed-text-v1.5",
+    ),
   quantization: z.enum(["fp32", "fp16", "int8"]).optional().default("int8").describe("Quantization"),
   download: z.boolean().optional().default(true).describe("Download model if not cached"),
 });
