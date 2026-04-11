@@ -1,5 +1,7 @@
 # Hypothesis
 
+Infers runtime relationships via 4-tier hypothesis generation and path-finding bridges.
+
 ## Overview
 
 The Hypothesis module infers runtime relationships between code entities that static AST analysis cannot discover—such as event handlers, callbacks, and interface dispatch through dynamic registration. It uses a 4-tier strategy: Tier 1–3 employ direct pattern matching and proximity heuristics to generate hypotheses with confidence scores, which are persisted to SQLite; Tier 4 (bridge) uses stored hypotheses as fallback pathfinding edges when standard graph traversal fails. This enables trace_flow to connect code that relies on late binding, framework-specific registration, or callback pipelines.

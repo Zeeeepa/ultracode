@@ -1,6 +1,6 @@
 # Patterns
 
-Two-stage pattern detection system combining structural metadata analysis with semantic embedding validation.
+Code pattern detection system combining structural and semantic analysis
 
 ## Overview
 

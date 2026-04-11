@@ -31,8 +31,8 @@ import { createGunzip } from "node:zlib";
 import { extract } from "tar";
 
 const OVMS_VERSION = process.argv.includes("--version")
-  ? process.argv[process.argv.indexOf("--version") + 1] || "2025.4"
-  : "2025.4";
+  ? process.argv[process.argv.indexOf("--version") + 1] || "2026.1"
+  : "2026.1";
 
 const c = {
   reset: "\x1b[0m",
@@ -95,26 +95,15 @@ function getDownloadUrl(): { url: string; filename: string } {
     // Windows binary from Intel weekly builds (NPU/GPU support)
     // Latest: https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/
     return {
-      url: `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_windows_python_on.zip`,
+      url: `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2026.1.0.72cc0624/ovms_windows_python_on.zip`,
       filename: "ovms_windows_python_on.zip",
     };
   } else if (process.platform === "linux") {
     // Weekly build for Linux with Python support (NPU/GPU)
-    let ubuntuVersion = "24";
-    try {
-      const osRelease = execSync("cat /etc/os-release 2>/dev/null || echo ''", {
-        encoding: "utf-8",
-      });
-      if (osRelease.includes("22.04") || osRelease.includes("jammy")) {
-        ubuntuVersion = "22";
-      }
-    } catch {
-      // Default to Ubuntu 24
-    }
-
+    // Note: OVMS 2026.1 only provides Ubuntu 24 builds (no Ubuntu 22)
     return {
-      url: `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`,
-      filename: `ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`,
+      url: `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2026.1.0.72cc0624/ovms_ubuntu24_python_on.tar.gz`,
+      filename: "ovms_ubuntu24_python_on.tar.gz",
     };
   } else if (process.platform === "darwin") {
     printError("macOS is not supported for OVMS native. Use Docker instead.");
@@ -370,7 +359,7 @@ async function main(): Promise<void> {
     // Fallback URL for Windows
     if (process.platform === "win32") {
       printInfo("Trying alternative download URL...");
-      const altUrl = `https://github.com/openvinotoolkit/model_server/releases/download/v${OVMS_VERSION}/ovms_windows.zip`;
+      const altUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2026.1.0.72cc0624/ovms_windows_python_on.zip`;
       try {
         await downloadFile(altUrl, archivePath);
       } catch (e: any) {

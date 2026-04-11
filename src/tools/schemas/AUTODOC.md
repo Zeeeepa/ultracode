@@ -1,6 +1,6 @@
 # Schemas
 
-Zod validation schemas for MCP tool parameters across code analysis, modification, search, and project management operations.
+Zod validation schemas for all MCP tool parameters and inputs.
 
 ## Overview
 

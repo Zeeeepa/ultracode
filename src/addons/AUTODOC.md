@@ -1,6 +1,6 @@
 # addons
 
-Manages external C# parsing via Roslyn .NET subprocess addon with lifecycle management and singleton pattern.
+Manages external process addons (Roslyn) for C# code parsing and analysis.
 
 ## Overview
 

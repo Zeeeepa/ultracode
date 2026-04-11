@@ -276,7 +276,7 @@ export const ru: SetupStrings = {
     nvidia_with_igpu: "Обнаружен NVIDIA GPU ({gpu}) - для embeddings будет использован Intel iGPU (GPU.0)",
     nvidia_igpu_note: "(OpenVINO NVIDIA plugin экспериментальный - Blackwell не работает, старые GPU не тестировались)",
     nvidia_no_igpu: "Обнаружен NVIDIA GPU ({gpu}) - нет Intel iGPU, используется CPU",
-    npu_detected: "NPU обнаружен, но не оптимален для embeddings - используется CPU",
+    npu_detected: "NPU обнаружен (Intel Core Ultra) — будет использован для инференса",
     cpu_fallback: "Используется CPU для инференса (GPU не обнаружен)",
     platform_not_supported: "OVMS Native поддерживается только на Windows и Linux",
     use_alternative: "Используйте OVMS Docker или Ollama",

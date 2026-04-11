@@ -1,6 +1,6 @@
 # Data
 
-Pre-built global cache of framework patterns and language built-ins for code indexing.
+Global cache entries for programming languages and framework patterns
 
 ## Overview
 

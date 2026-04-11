@@ -19,10 +19,10 @@ interface TargetDeviceResult {
   isIntelArc: boolean;
   isIntelGPU: boolean;
   isNvidiaGPU: boolean;
+  hasNPU: boolean;
 }
 
 function detectTargetDevice(cpu: CPUInfo, gpu: GPUInfo): TargetDeviceResult {
-  const hasNPU = cpu.model.toLowerCase().includes("ultra");
   const cpuModel = cpu.model.toLowerCase();
   const gpuName = gpu.name?.toLowerCase() || "";
   const isIntelGPU = gpu.available && gpuName.includes("intel");
@@ -34,10 +34,13 @@ function detectTargetDevice(cpu: CPUInfo, gpu: GPUInfo): TargetDeviceResult {
   const isIntelCPU = cpuModel.includes("intel") || cpuModel.includes("core");
   const hasIntelIGPU = isIntelGPU || (isIntelCPU && !cpuModel.includes("-f") && !cpuModel.includes("kf"));
 
+  // NPU is available on Intel Core Ultra processors
+  const hasNPU = cpuModel.includes("ultra");
+
   // Determine target device for model compilation
-  // OpenVINO device names: CPU, GPU.0 (Intel iGPU), GPU.1 (NVIDIA if present), NPU
-  // Note: NPU doesn't support BERT/embedding models well
-  // Note: NVIDIA via OpenVINO is GPU.1 but experimental, prefer Intel GPU.0
+  // OpenVINO device names: CPU, GPU.0 (Intel iGPU/Arc), GPU.1 (NVIDIA if present), NPU
+  // OVMS 2026.1: NPU works for embedding models (THROUGHPUT mode)
+  // NVIDIA via OpenVINO is GPU.1 but experimental, prefer Intel GPU.0
   let targetDevice = "CPU";
   if (isIntelArc) {
     targetDevice = "GPU";
@@ -47,7 +50,6 @@ function detectTargetDevice(cpu: CPUInfo, gpu: GPUInfo): TargetDeviceResult {
     printInfo(ti("ovms.intel_igpu_detected", { gpu: gpu.name }));
   } else if (isNvidiaGPU && hasIntelIGPU) {
     // NVIDIA is primary GPU but Intel iGPU exists - compile for GPU (Intel iGPU = GPU.0)
-    // NVIDIA via OpenVINO (GPU.1) is experimental and fails on Blackwell architecture
     targetDevice = "GPU";
     printInfo(ti("ovms.nvidia_with_igpu", { gpu: gpu.name }));
     printInfo(t("ovms.nvidia_igpu_note"));
@@ -56,38 +58,37 @@ function detectTargetDevice(cpu: CPUInfo, gpu: GPUInfo): TargetDeviceResult {
     targetDevice = "CPU";
     printInfo(ti("ovms.nvidia_no_igpu", { gpu: gpu.name }));
   } else if (hasNPU) {
+    // NPU available but no GPU - use CPU as primary target_device for model compilation
+    // NPU will be added as separate endpoint in multi-device config
     targetDevice = "CPU";
+  }
+
+  if (hasNPU) {
     printInfo(t("ovms.npu_detected"));
-  } else {
+  }
+
+  if (!isIntelArc && !isIntelGPU && !isNvidiaGPU && !hasNPU) {
     printInfo(t("ovms.cpu_fallback"));
   }
 
-  return { targetDevice, hasIntelIGPU, isIntelArc, isIntelGPU, isNvidiaGPU };
+  return { targetDevice, hasIntelIGPU, isIntelArc, isIntelGPU, isNvidiaGPU, hasNPU };
 }
 
 async function downloadOvmsBinary(ovmsDir: string, isWindows: boolean, _isLinux: boolean): Promise<string | null> {
-  const OVMS_VERSION = "2025.4";
+  const OVMS_VERSION = "2026.1";
+  const OVMS_BUILD_HASH = "2026.1.0.72cc0624";
   printInfo(ti("ovms.downloading", { version: OVMS_VERSION, platform: isWindows ? "Windows" : "Linux" }));
 
   let downloadUrl: string;
   let archiveName: string;
 
   if (isWindows) {
-    downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_windows_python_on.zip`;
+    downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/${OVMS_BUILD_HASH}/ovms_windows_python_on.zip`;
     archiveName = "ovms_windows_python_on.zip";
   } else {
-    let ubuntuVersion = "24";
-    try {
-      const osRelease = execSync("cat /etc/os-release 2>/dev/null || echo ''", { encoding: "utf-8" });
-      if (osRelease.includes("22.04") || osRelease.includes("jammy")) {
-        ubuntuVersion = "22";
-      }
-    } catch {
-      /* default 24 */
-    }
-
-    downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`;
-    archiveName = `ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`;
+    // OVMS 2026.1 only provides Ubuntu 24 builds (no Ubuntu 22)
+    downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/${OVMS_BUILD_HASH}/ovms_ubuntu24_python_on.tar.gz`;
+    archiveName = "ovms_ubuntu24_python_on.tar.gz";
   }
 
   const archivePath = join(ovmsDir, archiveName);
@@ -491,7 +492,7 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
   const isLinux = process.platform === "linux";
 
   // Detect hardware
-  const { targetDevice, hasIntelIGPU, isIntelArc, isIntelGPU, isNvidiaGPU } = detectTargetDevice(cpu, gpu);
+  const { targetDevice, hasIntelIGPU, isIntelArc, isIntelGPU, isNvidiaGPU, hasNPU } = detectTargetDevice(cpu, gpu);
 
   if (!isWindows && !isLinux) {
     printError(t("ovms.platform_not_supported"));
@@ -655,20 +656,29 @@ echo "Starting OpenVINO Model Server..."
   console.error("");
   console.error(`  ${c.dim}${ti("ovms.manual_start", { path: startScript })}${c.reset}`);
 
-  // Create multi-device configuration for GPU + CPU load balancing
+  // Create multi-device configuration for GPU + NPU + CPU load balancing
   // Note: For NVIDIA systems with Intel iGPU, we use Intel iGPU (GPU.0) for embeddings
   const hasGPU = hasIntelIGPU || isIntelArc || isIntelGPU;
   let endpoints: string[] = [modelDirName];
 
-  if (hasGPU && hasTokenizer) {
-    const createdEndpoints = createMultiDeviceConfig(modelsDir, hasGPU, modelsDir, modelDirName, isNvidiaGPU);
+  if ((hasGPU || hasNPU) && hasTokenizer) {
+    const createdEndpoints = createMultiDeviceConfig(
+      modelsDir,
+      hasGPU,
+      modelsDir,
+      modelDirName,
+      isNvidiaGPU,
+      hasNPU,
+      isIntelArc,
+    );
     if (createdEndpoints.length > 1) {
       endpoints = generateEndpointsArray(createdEndpoints);
       printOK(ti("ovms.multi_device_config", { devices: createdEndpoints.join(", ") }));
       const gpuCount = endpoints.filter((e) => e.includes("gpu")).length;
+      const npuCount = endpoints.filter((e) => e.includes("npu")).length;
       const cpuCount = endpoints.filter((e) => e.includes("cpu")).length;
       printInfo(
-        ti("ovms.round_robin_hint", { slots: String(endpoints.length), gpu: String(gpuCount), cpu: String(cpuCount) }),
+        ti("ovms.round_robin_hint", { slots: String(endpoints.length), gpu: String(gpuCount + npuCount), cpu: String(cpuCount) }),
       );
     }
   }

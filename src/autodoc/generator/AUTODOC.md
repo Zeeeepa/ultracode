@@ -1,6 +1,6 @@
 # Module: D:/github/ultracode/src/autodoc/generator
 
-Generates and maintains AUTODOC.md documentation with change detection, incremental updates, and LLM enrichment.
+Automatically generates and maintains AUTODOC.md files for TypeScript modules using batch processing, incremental updates, and LLM enrichment.
 
 ## Interface
 
