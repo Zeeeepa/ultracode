@@ -191,8 +191,7 @@ export type EmbeddingProviderKind =
   | "ollama"
   | "openai"
   | "ovms"
-  | "tei"
-  | "vllm";
+  | "tei";
 
 // ---------------------------------------------------------------------------
 // Worker embedding configuration
@@ -364,16 +363,6 @@ export interface EmbeddingConfig {
         protocol?: "rest" | "grpc" | undefined; // "rest" = HTTP/JSON, "grpc" = binary protobuf (~30 % faster)
         grpcPort?: number | undefined; // gRPC port (default: 9000)
         endpoints?: string[] | undefined; // Round-robin targets: ["embeddings-cpu", "embeddings-gpu"]
-      }
-    | undefined;
-
-  vllm?:
-    | {
-        baseUrl?: string | undefined;
-        timeoutMs?: number | undefined;
-        concurrency?: number | undefined;
-        maxBatchSize?: number | undefined;
-        encodingFormat?: "float" | "base64" | undefined;
       }
     | undefined;
 

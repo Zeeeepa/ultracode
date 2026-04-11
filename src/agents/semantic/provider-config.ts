@@ -15,7 +15,6 @@ export type ProviderKind =
   | "tei"
   | "ovms"
   | "ovms-native"
-  | "vllm"
   | "llamacpp"
   | "mlx"
   | "ollama"
@@ -137,8 +136,6 @@ export function mapSemanticConfigToProvider(semanticConfig: SemanticConfig | nul
       return "ovms";
     case "ovms-native":
       return "ovms-native";
-    case "vllm":
-      return "vllm";
     case "llamacpp":
       return "llamacpp";
     case "mlx":
@@ -165,10 +162,6 @@ export function getModelNameFromSemanticConfig(semanticConfig: SemanticConfig | 
     case "ovms":
     case "ovms-native":
       return semanticConfig.embedding?.ovms?.selected_model || topLevelModel || "all-MiniLM-L6-v2";
-    case "vllm":
-      return (
-        semanticConfig.embedding?.vllm?.selected_model || topLevelModel || "intfloat/multilingual-e5-large-instruct"
-      );
     case "llamacpp":
       return semanticConfig.embedding?.llamacpp?.selected_model || topLevelModel || "multilingual-e5-base";
     case "mlx":
@@ -279,15 +272,6 @@ export function buildEmbeddingGeneratorOptions(
       useEmbeddingsApi: ovmsConfig.useEmbeddingsApi ?? true,
       encodingFormat: ovmsConfig.encodingFormat ?? "base64",
       endpoints: ovmsConfig.endpoints,
-    };
-  }
-
-  // Configure vLLM from semantic-config.json
-  if (semanticConfig?.embedding?.platform === "vllm" && semanticConfig?.embedding?.vllm) {
-    const vllmCfg = semanticConfig.embedding.vllm;
-    options.vllm = {
-      baseUrl: vllmCfg.endpoint,
-      encodingFormat: vllmCfg.encoding_format as "float" | "base64" | undefined,
     };
   }
 

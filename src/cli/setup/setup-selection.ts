@@ -214,22 +214,7 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // 2. vLLM - NVIDIA GPU alternative (measured: 1352 emb/s)
-  // ══════════════════════════════════════════════════════════════════════
-  if (isNvidiaGPU) {
-    options.push({
-      id: "vllm",
-      name: t("provider.vllm.name"),
-      recommended: false,
-      speed: "1352 emb/s",
-      pros: ta("provider.vllm.pros"),
-      cons: ta("provider.vllm.cons"),
-      available: true,
-    });
-  }
-
-  // ══════════════════════════════════════════════════════════════════════
-  // 3. llama.cpp - native GGUF (441 emb/s). For AMD GPU / no-Docker
+  // 2. llama.cpp - native GGUF (441 emb/s). For AMD GPU / no-Docker
   // ══════════════════════════════════════════════════════════════════════
   if (!isNvidiaGPU) {
     options.push({
@@ -244,7 +229,7 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // 4. OVMS Native - OpenVINO (260-326 emb/s). CPU-only, Intel optimized
+  // 3. OVMS Native - OpenVINO (260-326 emb/s). Intel optimized
   // ══════════════════════════════════════════════════════════════════════
   if (!gpu.available && (isWindows || isLinux)) {
     options.push({

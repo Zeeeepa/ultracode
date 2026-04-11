@@ -137,7 +137,6 @@ export class EmbeddingGenerator {
           tei: this.config.tei,
           ovms: this.config.ovms,
           llamacpp: this.config.llamacpp,
-          vllm: this.config.vllm,
         });
         log.t("EMBEDDING", `[EmbeddingGenerator] ◀ createProvider (${Date.now() - createStart}ms)`);
 

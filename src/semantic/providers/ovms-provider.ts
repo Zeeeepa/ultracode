@@ -1,7 +1,6 @@
 import { toError } from "../../utils/error-handling.js";
 import { stringify } from "../../utils/fast-json.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
-import { ensureContainerRunning, waitForReady } from "./ovms-container.js";
 import { OVMSGrpcClient } from "./ovms-grpc-client.js";
 import { GPU_WARMUP_TEXTS, getTokenizerModel, normalizeVector, sleep } from "./ovms-utils.js";
 
@@ -96,24 +95,16 @@ export interface OVMSOptions {
 /**
  * OpenVINO Model Server (OVMS) Provider
  *
- * Connects to OVMS Docker container for embedding generation.
- * Uses @xenova/transformers for tokenization and OVMS V2 infer API.
+ * Connects to OVMS Native binary for embedding generation.
+ * Uses @lenml/tokenizers for tokenization and OVMS V2/V3 API.
  *
- * OVMS provides stable, isolated inference without Bun runtime conflicts.
+ * OVMS is managed by ovms-native-manager.ts (auto-start/stop with MCP server).
  *
  * Advantages:
- * - No timer/gc crashes in Bun
- * - Intel GPU/NPU support
- * - Large batch sizes (32-64+)
- * - Memory managed by OVMS
- *
- * Setup:
- * docker run -d --name ovms-embedding -p 8082:8080 \
- *   -v /models:/models \
- *   openvino/model_server:latest \
- *   --model_path /models/embeddings \
- *   --model_name embeddings \
- *   --port 9000 --rest_port 8080
+ * - Intel CPU/iGPU/Arc/NPU support via OpenVINO
+ * - Multi-device round-robin (GPU + NPU + CPU endpoints)
+ * - Large batch sizes (16-32+)
+ * - Memory managed by OVMS process
  */
 export class OVMSProvider implements EmbeddingProvider {
   public info: ProviderInfo;
@@ -203,16 +194,31 @@ export class OVMSProvider implements EmbeddingProvider {
       throw new Error(`Failed to load tokenizer for ${this.modelId}: ${err.message}`);
     }
 
+    // Wait for OVMS Native to be ready (managed by ovms-native-manager)
     if (this.checkServer) {
-      await ensureContainerRunning({
-        baseUrl: this.baseUrl,
-        isNative: this.isNative,
-        log: this.log,
-      });
+      const maxWaitMs = 120_000;
+      const startTime = Date.now();
+      this.log?.info("Waiting for OVMS to be ready...");
+      while (Date.now() - startTime < maxWaitMs) {
+        try {
+          const res = await fetch(`${this.baseUrl}/v2/health/ready`, {
+            method: "GET",
+            signal: AbortSignal.timeout(5000),
+          });
+          if (res.ok) {
+            const elapsed = Math.round((Date.now() - startTime) / 1000);
+            this.log?.info("OVMS is ready", { waitedSeconds: elapsed });
+            break;
+          }
+        } catch {
+          // Not ready yet
+        }
+        await sleep(2000);
+        if (Date.now() - startTime >= maxWaitMs) {
+          throw new Error(`OVMS not responding at ${this.baseUrl} within ${maxWaitMs / 1000}s`);
+        }
+      }
     }
-
-    // Wait for OVMS to be ready
-    await waitForReady(this.baseUrl, 120_000, this.log);
 
     // Get model info from OVMS
     try {

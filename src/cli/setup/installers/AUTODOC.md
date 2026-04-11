@@ -93,7 +93,6 @@ Each installer catches and reports errors at each stage (download, extraction, s
 - `installOllama`
 - `installOVMSNative`
 - `installTEI`
-- `installVLLM`
 
 ## Files
 

@@ -122,8 +122,6 @@ export class WorkerEmbeddingClient {
         return this.generateOllama(texts);
       case "openai":
         return this.generateOpenAI(texts);
-      case "vllm":
-        return this.generateVLLM(texts);
       case "llamacpp":
         return this.generateLlamaCpp(texts);
       default:
@@ -289,46 +287,6 @@ export class WorkerEmbeddingClient {
     return result.data.map((item) => {
       if (typeof item.embedding === "string") {
         throw new Error("Expected float array encoding from OpenAI");
-      }
-      return new Float32Array(item.embedding);
-    });
-  }
-
-  /**
-   * vLLM - OpenAI-compatible embeddings API
-   */
-  private async generateVLLM(texts: string[]): Promise<Float32Array[]> {
-    const url = `${this.baseUrl}/v1/embeddings`;
-    const timeout = this.config.providerOptions?.timeoutMs || 30000;
-    const encodingFormat = this.config.providerOptions?.encodingFormat || "float";
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: this.config.modelName,
-        input: texts,
-        encoding_format: encodingFormat,
-      }),
-      signal: AbortSignal.timeout(timeout),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`vLLM error: ${response.status} ${response.statusText} - ${body.slice(0, 500)}`);
-    }
-
-    const result = (await response.json()) as {
-      data: Array<{ embedding: number[] | string; index: number }>;
-    };
-
-    // Sort by index to ensure correct order
-    const sorted = [...result.data].sort((a, b) => a.index - b.index);
-    return sorted.map((item) => {
-      if (typeof item.embedding === "string") {
-        // base64-encoded Float32 array (vLLM 0.14+)
-        const binaryData = Buffer.from(item.embedding, "base64");
-        return new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
       }
       return new Float32Array(item.embedding);
     });

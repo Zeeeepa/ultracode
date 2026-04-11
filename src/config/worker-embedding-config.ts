@@ -24,7 +24,7 @@ interface ModelEntry {
  * Includes all possible properties from both sources
  */
 interface CombinedEmbeddingConfig {
-  platform?: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp" | "mlx" | string;
+  platform?: "tei" | "ovms" | "ovms-native" | "llamacpp" | "mlx" | string;
   architecture?: string;
   // Provider-specific configs
   tei?: {
@@ -60,18 +60,6 @@ interface CombinedEmbeddingConfig {
     apiKey?: string;
     timeoutMs?: number;
     concurrency?: number;
-  };
-  vllm?: {
-    endpoint?: string;
-    baseUrl?: string;
-    selected_model?: string;
-    model?: string;
-    max_batch_size?: number;
-    batchSize?: number;
-    encoding_format?: "float" | "base64";
-    timeoutMs?: number;
-    concurrency?: number;
-    models?: ModelEntry[];
   };
   llamacpp?: {
     endpoint?: string;
@@ -291,32 +279,6 @@ function resolveProviderConfig(embeddingConfig: CombinedEmbeddingConfig): {
     };
   }
 
-  if (embeddingConfig.vllm || embeddingConfig.platform === "vllm") {
-    const vllmConfig = embeddingConfig.vllm || {};
-    const modelName = vllmConfig.selected_model || vllmConfig.model || "intfloat/multilingual-e5-large-instruct";
-    // Larger batch = better GPU utilization, default 200 (server supports 256 via --max-num-seqs)
-    const batchSize = vllmConfig.max_batch_size || vllmConfig.batchSize || 200;
-    // Get vector_size from selected model in models array
-    const selectedModel = vllmConfig.models?.find((m: ModelEntry) => m.id === modelName);
-    if (selectedModel?.vector_size) {
-      // Store in embeddingConfig for later use by getModelDimensions
-      embeddingConfig.vector_dimensions = selectedModel.vector_size;
-    }
-    return {
-      providerKind: "vllm",
-      modelName,
-      batchSize,
-      providerOptions: {
-        baseUrl: vllmConfig.endpoint || vllmConfig.baseUrl || "http://127.0.0.1:8000",
-        timeoutMs: vllmConfig.timeoutMs || 30000,
-        // Higher concurrency for embedding workloads (server handles batching internally)
-        concurrency: vllmConfig.concurrency || 12,
-        maxBatchSize: vllmConfig.max_batch_size || 200,
-        encodingFormat: vllmConfig.encoding_format || "float",
-      },
-    };
-  }
-
   if (embeddingConfig.llamacpp || embeddingConfig.platform === "llamacpp") {
     // llama.cpp provider (local GGUF models)
     // Optimized for throughput: larger batch size, higher concurrency
@@ -440,7 +402,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   if (!cacheInitialized) {
     log.d("WORKEMBCONF", "config_check", { hasSemanticConfig: !!semanticConfig });
     if (embeddingConfig) {
-      log.d("WORKEMBCONF", "config_details", { platform: embeddingConfig.platform, hasVllm: !!embeddingConfig.vllm });
+      log.d("WORKEMBCONF", "config_details", { platform: embeddingConfig.platform });
     }
   }
 

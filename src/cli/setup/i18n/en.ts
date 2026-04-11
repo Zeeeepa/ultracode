@@ -34,11 +34,6 @@ export const en: SetupStrings = {
     title: "Embedding provider selection",
     recommended: "[RECOMMENDED]",
     selected: "Selected provider: {name}",
-    vllm: {
-      name: "vLLM Docker (NVIDIA GPU)",
-      pros: ["Fastest", "NVIDIA GPU acceleration", "OpenAI API", "Continuous batching"],
-      cons: ["Requires Docker", "Requires 8GB+ VRAM"],
-    },
     tei: {
       name: "TEI (GPU)",
       pros: ["Native batch", "HuggingFace optimization", "Low latency"],
@@ -118,7 +113,7 @@ export const en: SetupStrings = {
     zig: {
       claude_cli: "Claude Code CLI (local, uses your authorization)",
       claude_api: "Claude API (direct, needs API key)",
-      openai_compat: "OpenAI-compatible (Ollama / vLLM / LMStudio)",
+      openai_compat: "OpenAI-compatible (Ollama / LMStudio)",
       skip: "Skip LLM setup",
       claude_cli_detected: "Claude CLI detected and available",
       claude_cli_not_found: "Claude CLI not found — install: npm i -g @anthropic-ai/claude-code",
@@ -336,24 +331,6 @@ export const en: SetupStrings = {
     manual_start: "Manual start: {path}",
     multi_device_config: "Multi-device config: {devices}",
     round_robin_hint: "Round-robin distribution: {slots} slots ({gpu} GPU, {cpu} CPU)",
-  },
-
-  // ═══════════════════════════════════════════════════════════════
-  // vLLM specific
-  // ═══════════════════════════════════════════════════════════════
-  vllm: {
-    setup: "vLLM Docker setup (NVIDIA GPU)...",
-    nvidia_required: "vLLM requires NVIDIA GPU",
-    use_alternative: "Use OVMS Native or TEI for CPU/Intel GPU",
-    hf_token_found: "HuggingFace token found",
-    hf_token_missing: "HF_TOKEN not found — model downloads may be limited",
-    creating_container: "Creating vLLM container with model: {model}",
-    openai_api_hint: "vLLM uses OpenAI-compatible API at /v1/embeddings",
-    image_size_hint: "This may take several minutes (image is ~8GB)...",
-    image_downloaded: "vLLM image downloaded",
-    waiting_init: "Waiting for vLLM to initialize (model download may take several minutes)...",
-    server_ready: "vLLM server is ready!",
-    health_timeout_hint: "Model may still be downloading. Wait and check: curl http://127.0.0.1:8000/health",
   },
 
   // ═══════════════════════════════════════════════════════════════

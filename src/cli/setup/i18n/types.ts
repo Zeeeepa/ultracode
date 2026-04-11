@@ -45,7 +45,6 @@ export interface SetupStrings {
     recommended: string;
     selected: string;
     // Per-provider strings
-    vllm: ProviderStrings;
     tei: ProviderStrings;
     tei_blackwell: string;
     llamacpp: ProviderStrings;
@@ -309,24 +308,6 @@ export interface SetupStrings {
     manual_start: string;
     multi_device_config: string;
     round_robin_hint: string;
-  };
-
-  // ═══════════════════════════════════════════════════════════════
-  // vLLM specific
-  // ═══════════════════════════════════════════════════════════════
-  vllm: {
-    setup: string;
-    nvidia_required: string;
-    use_alternative: string;
-    hf_token_found: string;
-    hf_token_missing: string;
-    creating_container: string;
-    openai_api_hint: string;
-    image_size_hint: string;
-    image_downloaded: string;
-    waiting_init: string;
-    server_ready: string;
-    health_timeout_hint: string;
   };
 
   // ═══════════════════════════════════════════════════════════════

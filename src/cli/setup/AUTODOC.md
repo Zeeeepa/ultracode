@@ -1,6 +1,6 @@
 # Setup
 
-Interactive setup wizard for semantic embedding installation with hardware detection and provider configuration.
+Interactive setup wizard for semantic embeddings and LLM configuration
 
 ## Overview
 

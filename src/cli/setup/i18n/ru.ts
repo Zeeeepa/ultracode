@@ -34,11 +34,6 @@ export const ru: SetupStrings = {
     title: "Выбор провайдера embeddings",
     recommended: "[РЕКОМЕНДУЕТСЯ]",
     selected: "Выбран провайдер: {name}",
-    vllm: {
-      name: "vLLM Docker (NVIDIA GPU)",
-      pros: ["Самый быстрый", "NVIDIA GPU ускорение", "OpenAI API", "Continuous batching"],
-      cons: ["Требует Docker", "Требует 8GB+ VRAM"],
-    },
     tei: {
       name: "TEI (GPU)",
       pros: ["Native batch", "HuggingFace оптимизация", "Низкая латентность"],
@@ -118,7 +113,7 @@ export const ru: SetupStrings = {
     zig: {
       claude_cli: "Claude Code CLI (локально, через вашу авторизацию)",
       claude_api: "Claude API (прямой доступ, нужен API ключ)",
-      openai_compat: "OpenAI-совместимый (Ollama / vLLM / LMStudio)",
+      openai_compat: "OpenAI-совместимый (Ollama / LMStudio)",
       skip: "Пропустить настройку LLM",
       claude_cli_detected: "Claude CLI обнаружен и доступен",
       claude_cli_not_found: "Claude CLI не найден — установка: npm i -g @anthropic-ai/claude-code",
@@ -336,24 +331,6 @@ export const ru: SetupStrings = {
     manual_start: "Ручной запуск: {path}",
     multi_device_config: "Multi-device конфигурация: {devices}",
     round_robin_hint: "Round-robin распределение: {slots} слотов ({gpu} GPU, {cpu} CPU)",
-  },
-
-  // ═══════════════════════════════════════════════════════════════
-  // vLLM specific
-  // ═══════════════════════════════════════════════════════════════
-  vllm: {
-    setup: "vLLM Docker setup (NVIDIA GPU)...",
-    nvidia_required: "vLLM требует NVIDIA GPU",
-    use_alternative: "Используйте OVMS Native или TEI для CPU/Intel GPU",
-    hf_token_found: "HuggingFace токен найден",
-    hf_token_missing: "HF_TOKEN не найден — загрузка моделей может быть ограничена",
-    creating_container: "Создание vLLM контейнера с моделью: {model}",
-    openai_api_hint: "vLLM использует OpenAI-compatible API на /v1/embeddings",
-    image_size_hint: "Это может занять несколько минут (образ ~8GB)...",
-    image_downloaded: "vLLM образ загружен",
-    waiting_init: "Ожидание инициализации vLLM (загрузка модели может занять несколько минут)...",
-    server_ready: "vLLM сервер готов!",
-    health_timeout_hint: "Модель может ещё загружаться. Подождите и проверьте: curl http://127.0.0.1:8000/health",
   },
 
   // ═══════════════════════════════════════════════════════════════

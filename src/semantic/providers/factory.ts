@@ -12,7 +12,6 @@ import { OllamaProvider } from "./ollama-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
 import { OVMSProvider } from "./ovms-provider.js";
 import { TEIProvider } from "./tei-provider.js";
-import { VLLMProvider } from "./vllm-provider.js";
 
 //Auto-detection order
 
@@ -49,27 +48,6 @@ function buildCandidates(): DetectionCandidate[] {
       model: "gguf",
       url: `http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}/health`,
       label: "llama.cpp",
-    },
-    {
-      provider: "vllm",
-      model: "intfloat/multilingual-e5-small",
-      url: "http://127.0.0.1:8000/health",
-      label: "vLLM Docker",
-      async postDetect() {
-        try {
-          const resp = await fetch("http://127.0.0.1:8000/v1/models", {
-            method: "GET",
-            signal: AbortSignal.timeout(2000),
-          });
-          if (resp.ok) {
-            const body = (await resp.json()) as { data?: Array<{ id?: string }> };
-            return body.data?.[0]?.id ?? null;
-          }
-        } catch {
-          log.d("FACTORY", "vLLM /v1/models failed, using default model name");
-        }
-        return null;
-      },
     },
     {
       provider: "tei",
@@ -110,11 +88,10 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
   throw new Error(
     "No embedding provider available. Please run: bun run mcp setup-embedding\n" +
       "Supported providers (by speed):\n" +
-      "  - vLLM (1352 emb/s) - NVIDIA GPU, Docker required\n" +
-      "  - TEI (1193 emb/s) - GPU, Docker required\n" +
-      "  - llama.cpp (373 emb/s) - Native GGUF, no Docker\n" +
-      "  - MLX - Apple Silicon Metal GPU, macOS ARM64\n" +
-      "  - OVMS - Intel optimized, no Docker",
+      "  - TEI (1193 emb/s) - NVIDIA GPU, Docker required\n" +
+      "  - llama.cpp (441 emb/s) - Native GGUF, AMD/CPU, no Docker\n" +
+      "  - OVMS (326 emb/s) - Intel CPU/iGPU/NPU/Arc, no Docker\n" +
+      "  - MLX (~400 emb/s) - Apple Silicon Metal GPU, macOS ARM64",
   );
 }
 
@@ -184,16 +161,6 @@ export interface ProviderFactoryOptions {
         protocol?: "rest" | "grpc" | undefined; // Protocol: rest (HTTP/JSON) or grpc (binary protobuf)
         grpcPort?: number | undefined; // gRPC port (default: 9000)
         endpoints?: string[] | undefined; // Multi-device endpoints for round-robin: ["embeddings-cpu", "embeddings-gpu"]
-      }
-    | undefined;
-  vllm?:
-    | {
-        baseUrl?: string | undefined;
-        timeoutMs?: number | undefined;
-        concurrency?: number | undefined;
-        checkServer?: boolean | undefined;
-        maxBatchSize?: number | undefined;
-        encodingFormat?: "float" | "base64" | undefined;
       }
     | undefined;
   llamacpp?:
@@ -309,22 +276,6 @@ const builders = new Map<string, BuilderFn>([
     },
   ],
   [
-    "vllm",
-    (model, opts) => {
-      const baseUrl = opts.vllm?.baseUrl || "http://127.0.0.1:8000";
-      return new VLLMProvider({
-        model,
-        baseUrl,
-        timeoutMs: opts.vllm?.timeoutMs,
-        concurrency: opts.vllm?.concurrency,
-        maxBatchSize: opts.vllm?.maxBatchSize,
-        checkServer: opts.vllm?.checkServer,
-        encodingFormat: opts.vllm?.encodingFormat,
-        logger: makeProviderLogger(null, "PROVIDER_VLLM"),
-      });
-    },
-  ],
-  [
     "llamacpp",
     (model, opts) => {
       const baseUrl = opts.llamacpp?.baseUrl || `http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}`;
@@ -432,7 +383,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
   if (!builder) {
     throw new Error(
       `Unknown embedding provider: ${targetKind}. ` +
-        `Supported providers: vllm, tei, ollama, llamacpp, mlx, ovms, ovms-native, openai, cloudru, huggingface`,
+        `Supported providers: tei, ollama, llamacpp, mlx, ovms, ovms-native, openai, cloudru, huggingface`,
     );
   }
 

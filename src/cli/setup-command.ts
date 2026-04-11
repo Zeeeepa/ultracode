@@ -181,7 +181,7 @@ function buildEmbeddingConfig(
     enabled: true,
     embedding: {
       // TS-specific fields
-      platform: provider as "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp",
+      platform: provider as "tei" | "ovms" | "ovms-native" | "llamacpp",
       architecture: gpu.architecture,
       ovms: isOVMS
         ? {
@@ -232,22 +232,6 @@ function buildEmbeddingConfig(
                 ],
               };
             })()
-          : undefined,
-      vllm:
-        provider === "vllm"
-          ? {
-              endpoint: "http://127.0.0.1:8000",
-              max_batch_size: 200, // vLLM 0.14+ handles larger batches well
-              encoding_format: "base64", // ~33% smaller payloads (vLLM 0.14+)
-              selected_model: selectedModel.model_id,
-              models: [
-                {
-                  id: selectedModel.model_id,
-                  languages: [selectedModel.language],
-                  vector_size: selectedModel.dimensions,
-                },
-              ],
-            }
           : undefined,
       llamacpp:
         provider === "llamacpp"
@@ -352,15 +336,12 @@ export async function runSetup(args: string[]): Promise<void> {
   const localeConfig = detectSystemLocale(langArg);
   setSetupLanguage(localeConfig.language);
 
-  // Step 0: Docker check (required for embedding providers)
-  if (!checkDocker()) {
-    printError("Docker is required for embedding providers (OVMS / TEI / vLLM).");
-    console.error("");
-    console.error(`  Install Docker: ${c.cyan}https://docker.com${c.reset}`);
-    console.error("");
-    process.exit(1);
+  // Step 0: Docker check (optional — only needed for TEI provider)
+  if (checkDocker()) {
+    printOK("Docker detected");
+  } else {
+    printWarn("Docker not found — TEI provider will be unavailable. OVMS/llama.cpp/MLX work without Docker.");
   }
-  printOK("Docker detected");
 
   // Step 0.5: Detect hardware
   const cpu = CPUDetector.detect();
@@ -506,10 +487,6 @@ export async function runSetup(args: string[]): Promise<void> {
     console.error(`${c.dim}TEI Management:${c.reset}`);
     console.error(`${c.dim}  docker logs tei-server      # View logs${c.reset}`);
     console.error(`${c.dim}  docker restart tei-server   # Restart${c.reset}`);
-  } else if (provider === "vllm") {
-    console.error(`${c.dim}vLLM Management:${c.reset}`);
-    console.error(`${c.dim}  docker logs vllm-server     # View logs${c.reset}`);
-    console.error(`${c.dim}  docker restart vllm-server  # Restart${c.reset}`);
   }
 
   // Cleanup: Kill Docker's built-in llama-server if running

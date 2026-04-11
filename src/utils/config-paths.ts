@@ -153,7 +153,7 @@ export interface SharedBaseConfig {
 export interface SemanticConfig {
   enabled: boolean;
   embedding: {
-    platform: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp" | "mlx";
+    platform: "tei" | "ovms" | "ovms-native" | "llamacpp" | "mlx";
     architecture: string;
     ovms?:
       | {
@@ -182,21 +182,6 @@ export interface SemanticConfig {
           max_batch_tokens?: number | undefined;
           max_client_batch_size?: number | undefined;
           concurrency?: number | undefined; // Client-side concurrent requests (default 16)
-          selected_model: string | null;
-          models?:
-            | Array<{
-                id: string;
-                languages: string[];
-                vector_size: number;
-              }>
-            | undefined;
-        }
-      | undefined;
-    vllm?:
-      | {
-          endpoint: string;
-          max_batch_size?: number | undefined;
-          encoding_format?: "float" | "base64" | undefined;
           selected_model: string | null;
           models?:
             | Array<{
@@ -452,10 +437,6 @@ export function getVectorDimensions(): number {
       case "ovms-native":
         selectedModel = config.embedding.ovms?.selected_model || null;
         models = config.embedding.ovms?.models;
-        break;
-      case "vllm":
-        selectedModel = config.embedding.vllm?.selected_model || null;
-        models = config.embedding.vllm?.models;
         break;
       case "tei":
         selectedModel = config.embedding.tei?.selected_model || null;

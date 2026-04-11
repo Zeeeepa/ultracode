@@ -1,11 +1,10 @@
 /**
  * Provider Installation Functions
  *
- * Handles OVMS (Native), TEI, vLLM, and Ollama embedding providers.
+ * Handles OVMS (Native), TEI, llama.cpp, Ollama, and MLX embedding providers.
  * This file re-exports from the modular installers/ and utils/ directories.
  *
  * Structure:
- * - installers/vllm-installer.ts - vLLM Docker Installation (NVIDIA GPU)
  * - installers/tei-installer.ts - TEI Docker Installation
  * - installers/ollama-installer.ts - Ollama Installation
  * - installers/ovms-installer.ts - OVMS Native Installation
@@ -28,7 +27,6 @@ import { installOllama } from "./installers/ollama-installer.js";
 // Import installers
 import { installOVMSNative } from "./installers/ovms-installer.js";
 import { installTEI } from "./installers/tei-installer.js";
-import { installVLLM } from "./installers/vllm-installer.js";
 
 /**
  * Main Installation Router
@@ -45,9 +43,6 @@ export async function installProvider(
   if (provider === "ovms" || provider === "ovms-native") {
     const result = await installOVMSNative(model, cpu, gpu);
     return result;
-  } else if (provider === "vllm") {
-    const success = await installVLLM(model, gpu);
-    return { success };
   } else if (provider === "tei") {
     const success = await installTEI(model, gpu);
     return { success };

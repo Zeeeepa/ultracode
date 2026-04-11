@@ -1,6 +1,6 @@
 # Schemas
 
-Zod validation schemas for all MCP tool parameters and inputs.
+Zod validation schemas for MCP tool parameters and configurations
 
 ## Overview
 

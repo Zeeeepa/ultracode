@@ -26,8 +26,6 @@ const execAsync = promisify(exec);
 
 export const OVMS_NATIVE_REST_PORT = 8083;
 export const OVMS_NATIVE_GRPC_PORT = 9001;
-export const OVMS_DOCKER_REST_PORT = 8082;
-export const OVMS_DOCKER_GRPC_PORT = 9000;
 
 export interface OVMSNativeConfig {
   enabled: boolean;
