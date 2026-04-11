@@ -59,10 +59,7 @@ function copyModelFiles(sourceDir: string, targetDir: string): void {
 /**
  * Generate graph.pbtxt content for a given device configuration.
  */
-function generateGraphPbtxt(opts: {
-  targetDevice: string;
-  pluginConfig: Record<string, string>;
-}): string {
+function generateGraphPbtxt(opts: { targetDevice: string; pluginConfig: Record<string, string> }): string {
   const pluginJson = JSON.stringify(opts.pluginConfig);
   return `input_stream: "REQUEST_PAYLOAD:input"
 output_stream: "RESPONSE_PAYLOAD:output"

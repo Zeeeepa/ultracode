@@ -678,7 +678,11 @@ echo "Starting OpenVINO Model Server..."
       const npuCount = endpoints.filter((e) => e.includes("npu")).length;
       const cpuCount = endpoints.filter((e) => e.includes("cpu")).length;
       printInfo(
-        ti("ovms.round_robin_hint", { slots: String(endpoints.length), gpu: String(gpuCount + npuCount), cpu: String(cpuCount) }),
+        ti("ovms.round_robin_hint", {
+          slots: String(endpoints.length),
+          gpu: String(gpuCount + npuCount),
+          cpu: String(cpuCount),
+        }),
       );
     }
   }
